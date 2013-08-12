@@ -30,8 +30,8 @@
 struct cgroup_desc {
 	char *mntpt; /* where this is mounted */
 	char *subsystems; /* comma-separated list of subsystems, or NULL */
-	char *curcgroup; /* task's current cgroup */
-	char *fullpath; /* full path of task's current cgroup */
+	char *curcgroup; /* task's current cgroup, full pathanme */
+	char *realcgroup; /* the cgroup as known in /proc/self/cgroup */
 	struct cgroup_desc *next;
 };
 
@@ -40,9 +40,14 @@ extern int lxc_cgroup_destroy_desc(struct cgroup_desc *cgroups);
 extern char *lxc_cgroup_path_get(const char *subsystem, const char *name,
 			      const char *lxcpath);
 extern int lxc_cgroup_nrtasks(const char *cgpath);
-extern char *lxc_cgroup_path_create(const char *lxcgroup, const char *name);
+struct cgroup_desc *lxc_cgroup_path_create(const char *name);
 extern int lxc_cgroup_enter(struct cgroup_desc *cgroups, pid_t pid);
 extern int lxc_cgroup_attach(pid_t pid, const char *name, const char *lxcpath);
 extern char *cgroup_path_get(const char *subsystem, const char *cgpath);
 extern bool is_in_subcgroup(int pid, const char *subsystem, const char *cgpath);
+/*
+ * Called by commands.c by a container's monitor to find out the
+ * container's cgroup path in a specific subsystem
+ */
+extern char *cgroup_get_subsys_path(struct lxc_handler *handler, const char *subsys);
 #endif
