@@ -466,7 +466,7 @@ static void set_clone_children(struct mntent *m)
 	FILE *fout;
 	int ret;
 
-	if (!in_cgroup_list(m->mnt_opts, "cpuset"))
+	if (!in_cgroup_list("cpuset", m->mnt_opts))
 		return;
 	ret = snprintf(path, MAXPATHLEN, "%s/cgroup.clone_children", m->mnt_dir);
 	if (ret < 0 || ret > MAXPATHLEN)
@@ -755,7 +755,7 @@ static char *find_free_cgroup(struct cgroup_desc *d, const char *lxc_name)
 		ret = snprintf(cgp, freebytes, "/%s%s", lxc_name, tail);
 		if (ret < 0 || ret >= freebytes)
 			return NULL;
-		if (stat(path, &sb) == -1 && errno == EEXIST)
+		if (stat(path, &sb) == -1)
 			break;
 		i++;
 	}
@@ -798,7 +798,6 @@ static char *find_free_cgroup(struct cgroup_desc *d, const char *lxc_name)
 struct cgroup_desc *lxc_cgroup_path_create(const char *name)
 {
 	struct cgroup_desc *retdesc = NULL, *newdesc = NULL;
-	char path[MAXPATHLEN];
 	FILE *file = NULL;
 	struct mntent mntent_r;
 	char buf[LARGE_MAXPATHLEN] = {0};
@@ -859,8 +858,8 @@ struct cgroup_desc *lxc_cgroup_path_create(const char *name)
 
 		set_clone_children(&mntent_r);
 
-		if (mkdir(path, 0755)) {
-			ERROR("Error creating cgroup %s", path);
+		if (mkdir(newdesc->curcgroup, 0755)) {
+			ERROR("Error creating cgroup %s", newdesc->curcgroup);
 			goto fail;
 		}
 		newdesc->next = retdesc;
