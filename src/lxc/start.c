@@ -593,10 +593,10 @@ int save_phys_nics(struct lxc_conf *conf)
 	return 0;
 }
 
-extern bool is_in_subcgroup(int pid, const char *subsystem, const char *cgpath);
+extern bool is_in_subcgroup(int pid, const char *subsystem, struct cgroup_desc *d);
 int lxc_spawn(struct lxc_handler *handler)
 {
-	int failed_before_rename = 0, len;
+	int failed_before_rename = 0;
 	const char *name = handler->name;
 
 	if (lxc_sync_init(handler))
@@ -662,7 +662,7 @@ int lxc_spawn(struct lxc_handler *handler)
 	if ((handler->cgroup = lxc_cgroup_path_create(name)) == NULL)
 		goto out_delete_net;
 
-	if (setup_cgroup(handler->cgroup, &handler->conf->cgroup)) {
+	if (setup_cgroup(handler, &handler->conf->cgroup)) {
 		ERROR("failed to setup the cgroups for '%s'", name);
 		goto out_delete_net;
 	}
@@ -697,7 +697,7 @@ int lxc_spawn(struct lxc_handler *handler)
 	if (lxc_sync_barrier_child(handler, LXC_SYNC_POST_CONFIGURE))
 		goto out_delete_net;
 
-	if (setup_cgroup_devices(handler->cgroup, &handler->conf->cgroup)) {
+	if (setup_cgroup_devices(handler, &handler->conf->cgroup)) {
 		/* an unfortunate special case: startup hooks may have already
 		 * setup the cgroup.  If a setting fails, and this is the devices
 		 * subsystem, *and* we are already in a subset of the cgroup,

@@ -36,15 +36,16 @@ struct cgroup_desc {
 };
 
 struct lxc_handler;
-extern int lxc_cgroup_destroy_desc(struct cgroup_desc *cgroups);
+extern void lxc_cgroup_destroy_desc(struct cgroup_desc *cgroups);
 extern char *lxc_cgroup_path_get(const char *subsystem, const char *name,
 			      const char *lxcpath);
-extern int lxc_cgroup_nrtasks(const char *cgpath);
+extern int lxc_cgroup_nrtasks(struct lxc_handler *handler);
 struct cgroup_desc *lxc_cgroup_path_create(const char *name);
 extern int lxc_cgroup_enter(struct cgroup_desc *cgroups, pid_t pid);
 extern int lxc_cgroup_attach(pid_t pid, const char *name, const char *lxcpath);
 extern char *cgroup_path_get(const char *subsystem, const char *cgpath);
-extern bool is_in_subcgroup(int pid, const char *subsystem, const char *cgpath);
+extern bool get_subsys_mount(char *dest, const char *subsystem);
+extern bool is_in_subcgroup(int pid, const char *subsystem, struct cgroup_desc *d);
 /*
  * Called by commands.c by a container's monitor to find out the
  * container's cgroup path in a specific subsystem

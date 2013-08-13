@@ -29,6 +29,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <fcntl.h>
+#include <ctype.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/param.h>
@@ -96,20 +97,18 @@ static char *mount_has_subsystem(const struct mntent *mntent)
 
 /*
  * Determine mountpoint for a cgroup subsystem.
- * @subsystem: cgroup subsystem (i.e. freezer).  If this is NULL, the first
- * cgroup mountpoint with any subsystems is used.
- * @mnt: a passed-in buffer of at least size MAXPATHLEN into which the path
+ * @dest: a passed-in buffer of at least size MAXPATHLEN into which the path
  * is copied.
+ * @subsystem: cgroup subsystem (i.e. freezer)
  *
  * Returns 0 on success, -1 on error.
  */
-static int get_cgroup_mount(const char *subsystem, char *mnt)
+bool get_subsys_mount(char *dest, const char *subsystem)
 {
-	struct mntent mntent_r;
+	struct mntent *mntent;
 	FILE *file = NULL;
-	int ret, err = -1;
-
-	char buf[LARGE_MAXPATHLEN] = {0};
+	int ret;
+	bool retv = false;
 
 	file = setmntent(MTAB, "r");
 	if (!file) {
@@ -117,24 +116,23 @@ static int get_cgroup_mount(const char *subsystem, char *mnt)
 		return -1;
 	}
 
-	while ((getmntent_r(file, &mntent_r, buf, sizeof(buf)))) {
-		if (strcmp(mntent_r.mnt_type, "cgroup") != 0)
+	while ((mntent = getmntent(file))) {
+		if (strcmp(mntent->mnt_type, "cgroup"))
 			continue;
 
 		if (subsystem) {
-			if (!hasmntopt(&mntent_r, subsystem))
+			if (!hasmntopt(mntent, subsystem))
 				continue;
 		} else {
-			if (!mount_has_subsystem(&mntent_r))
+			if (!mount_has_subsystem(mntent))
 				continue;
 		}
 
-		ret = snprintf(mnt, MAXPATHLEN, "%s", mntent_r.mnt_dir);
+		ret = snprintf(dest, MAXPATHLEN, "%s", mntent->mnt_dir);
 		if (ret < 0 || ret >= MAXPATHLEN)
 			goto fail;
 
-		DEBUG("using cgroup mounted at '%s'", mnt);
-		err = 0;
+		retv = true;
 		goto out;
 	};
 
@@ -143,78 +141,34 @@ fail:
 	      subsystem ? subsystem : "(NULL)");
 out:
 	endmntent(file);
-	return err;
+	return retv;
 }
 
 /*
- * cgroup_path_get: Get the absolute path to a particular subsystem,
- * plus a passed-in (to be appended) relative cgpath for a container.
- *
- * @subsystem : subsystem of interest (e.g. "freezer")
- * @cgrelpath : a container's relative cgroup path (e.g. "lxc/c1")
- *
- * Returns absolute path on success, NULL on error. The caller must free()
- * the returned path.
- *
- * Note that @subsystem may be the name of an item (e.g. "freezer.state")
- * in which case the subsystem will be determined by taking the string up
- * to the first '.'
+ * is_in_cgroup: check whether pid is found in the passed-in cgroup tasks
+ * file.
+ * @path:  in full path to a cgroup tasks file
+ * Note that in most cases the file will simply not exist, which is ok - it
+ * just means that's not our cgroup.
  */
-char *cgroup_path_get(const char *subsystem, const char *cgrelpath)
+static bool is_in_cgroup(pid_t pid, char *path)
 {
-	int rc;
+	int cmppid;
+	FILE *f = fopen(path, "r");
+	char *line = NULL;
+	size_t sz = 0;
 
-	char *buf = NULL;
-	char *cgabspath = NULL;
-
-	buf = malloc(MAXPATHLEN * sizeof(char));
-	if (!buf) {
-		ERROR("malloc failed");
-		goto out1;
-	}
-
-	cgabspath = malloc(MAXPATHLEN * sizeof(char));
-	if (!cgabspath) {
-		ERROR("malloc failed");
-		goto out2;
-	}
-
-	/* lxc_cgroup_set passes a state object for the subsystem,
-	 * so trim it to just the subsystem part */
-	if (subsystem) {
-		rc = snprintf(cgabspath, MAXPATHLEN, "%s", subsystem);
-		if (rc < 0 || rc >= MAXPATHLEN) {
-			ERROR("subsystem name too long");
-			goto err3;
+	if (!f)
+		return false;
+	while (getline(&line, &sz, f) != -1) {
+		if (sscanf(line, "%d", &cmppid) == 1 && cmppid == pid) {
+			fclose(f);
+			free(line);
+			return true;
 		}
-		char *s = index(cgabspath, '.');
-		if (s)
-			*s = '\0';
-		DEBUG("%s: called for subsys %s name %s\n", __func__,
-		      subsystem, cgrelpath);
 	}
-	if (get_cgroup_mount(subsystem ? cgabspath : NULL, buf)) {
-		ERROR("cgroup is not mounted");
-		goto err3;
-	}
-
-	rc = snprintf(cgabspath, MAXPATHLEN, "%s/%s", buf, cgrelpath);
-	if (rc < 0 || rc >= MAXPATHLEN) {
-		ERROR("name too long");
-		goto err3;
-	}
-
-	DEBUG("%s: returning %s for subsystem %s relpath %s", __func__,
-		cgabspath, subsystem, cgrelpath);
-	goto out2;
-
-err3:
-	free(cgabspath);
-	cgabspath = NULL;
-out2:
-	free(buf);
-out1:
-	return cgabspath;
+	fclose(f);
+	return false;
 }
 
 /*
@@ -235,16 +189,52 @@ out1:
 char *lxc_cgroup_path_get(const char *subsystem, const char *name,
 			  const char *lxcpath)
 {
-	char *cgabspath;
-	char *cgrelpath;
+	char *cgpath, *cgp, path[MAXPATHLEN], *pathp;
+	pid_t initpid = lxc_cmd_get_init_pid(name, lxcpath);
+	int ret;
 
-	cgrelpath = lxc_cmd_get_cgroup_path(name, lxcpath, subsystem);
-	if (!cgrelpath)
+	if (initpid < 0) {
+		ERROR("Error getting init pid for container %s:%s",
+			lxcpath, name);
+		return NULL;
+	}
+
+	cgpath = lxc_cmd_get_cgroup_path(name, lxcpath, subsystem);
+	if (!cgpath)
 		return NULL;
 
-	cgabspath = cgroup_path_get(subsystem, cgrelpath);
-	free(cgrelpath);
-	return cgabspath;
+	if (!get_subsys_mount(path, subsystem))
+		return NULL;
+
+	pathp = path + strlen(path);
+	/*
+	 * find a mntpt where i have the subsystem mounted, then find
+	 * a subset cgpath under that which has pid in it.
+	 *
+	 * If d->mntpt is '/a/b/c/d', and the mountpoint is /x/y/z,
+	 * then look for ourselves in:
+	 *    /x/y/z/a/b/c/d/tasks
+	 *    /x/y/z/b/c/d/tasks
+	 *    /x/y/z/c/d/tasks
+	 *    /x/y/z/d/tasks
+	 *    /x/y/z/tasks
+	 */
+	cgp = cgpath;
+	while (cgp[0]) {
+		ret = snprintf(pathp, MAXPATHLEN - (pathp - path), "%s/tasks", cgp);
+		if (ret < 0 || ret >= MAXPATHLEN)
+			return NULL;
+		if (!is_in_cgroup(initpid, path)) {
+			// does not exist, try the next one
+			cgp = index(cgp, '/');
+			if (!cgp)
+				break;
+			continue;
+		}
+	}
+	if (!cgp || !*cgp)
+		return NULL;
+	return strdup(path);
 }
 
 /*
@@ -286,28 +276,29 @@ static int do_cgroup_set(const char *path, const char *value)
  *
  * Returns 0 on success, < 0 on error.
  */
-int lxc_cgroup_set_bypath(const char *cgrelpath, const char *filename, const char *value)
+int lxc_cgroup_set_value(struct lxc_handler *handler, const char *filename,
+			const char *value)
 {
+	char *cgabspath, path[MAXPATHLEN], *p;
 	int ret;
-	char *cgabspath;
-	char path[MAXPATHLEN];
 
-	cgabspath = cgroup_path_get(filename, cgrelpath);
+	ret = snprintf(path, MAXPATHLEN, "%s", filename);
+	if (ret < 0 || ret >= MAXPATHLEN)
+		return -1;
+	if ((p = index(path, '.')) != NULL)
+		*p = '\0';
+	cgabspath = cgroup_get_subsys_path(handler, path);
 	if (!cgabspath)
 		return -1;
 
 	ret = snprintf(path, MAXPATHLEN, "%s/%s", cgabspath, filename);
 	if (ret < 0 || ret >= MAXPATHLEN) {
-		ERROR("pathname too long");
-		ret = -1;
-		goto out;
+		ERROR("pathname too long to set cgroup value %s to %s",
+			filename, value);
+		return -1;
 	}
 
-	ret = do_cgroup_set(path, value);
-
-out:
-	free(cgabspath);
-	return ret;
+	return do_cgroup_set(path, value);
 }
 
 /*
@@ -326,8 +317,12 @@ int lxc_cgroup_set(const char *name, const char *filename, const char *value,
 	int ret;
 	char *cgabspath;
 	char path[MAXPATHLEN];
+	char *subsystem = strdupa(filename), *p;
 
-	cgabspath = lxc_cgroup_path_get(filename, name, lxcpath);
+	if ((p = index(subsystem, '.')) != NULL)
+		*p = '\0';
+
+	cgabspath = lxc_cgroup_path_get(subsystem, name, lxcpath);
 	if (!cgabspath)
 		return -1;
 
@@ -370,8 +365,12 @@ int lxc_cgroup_get(const char *name, const char *filename, char *value,
 	int fd, ret;
 	char *cgabspath;
 	char path[MAXPATHLEN];
+	char *subsystem = strdupa(filename), *p;
 
-	cgabspath = lxc_cgroup_path_get(filename, name, lxcpath);
+	if ((p = index(subsystem, '.')) != NULL)
+		*p = '\0';
+
+	cgabspath = lxc_cgroup_path_get(subsystem, name, lxcpath);
 	if (!cgabspath)
 		return -1;
 
@@ -410,29 +409,25 @@ out:
 	return ret;
 }
 
-int lxc_cgroup_nrtasks(const char *cgrelpath)
+int lxc_cgroup_nrtasks(struct lxc_handler *handler)
 {
-	char *cgabspath = NULL;
 	char path[MAXPATHLEN];
 	int pid, ret;
 	FILE *file;
 
-	cgabspath = cgroup_path_get(NULL, cgrelpath);
-	if (!cgabspath)
+	if (!handler->cgroup)
 		return -1;
 
-	ret = snprintf(path, MAXPATHLEN, "%s/tasks", cgabspath);
+	ret = snprintf(path, MAXPATHLEN, "%s/tasks", handler->cgroup->curcgroup);
 	if (ret < 0 || ret >= MAXPATHLEN) {
 		ERROR("pathname too long");
-		ret = -1;
-		goto out;
+		return -1;
 	}
 
 	file = fopen(path, "r");
 	if (!file) {
 		SYSERROR("fopen '%s' failed", path);
-		ret = -1;
-		goto out;
+		return -1;
 	}
 
 	ret = 0;
@@ -440,31 +435,10 @@ int lxc_cgroup_nrtasks(const char *cgrelpath)
 		ret++;
 
 	fclose(file);
-
-out:
-	free(cgabspath);
 	return ret;
 }
 
-static void set_clone_children(struct mntent *m)
-{
-	char path[MAXPATHLEN];
-	FILE *fout;
-	int ret;
-
-	if (!in_cgroup_list(m->mnt_opts, "cpuset"))
-		return;
-	ret = snprintf(path, MAXPATHLEN, "%s/cgroup.clone_children", m->mntdir);
-	if (ret < 0 || ret > MAXPATHLEN)
-		return;
-	fout = fopen(path, "w");
-	if (!fout)
-		return;
-	fprintf(fout, "1\n");
-	fclose(fout);
-}
-
-static int in_cgroup_list(char *s, char *list)
+static int in_cgroup_list(const char *s, const char *list)
 {
 	char *token, *str, *saveptr = NULL;
 
@@ -477,6 +451,24 @@ static int in_cgroup_list(char *s, char *list)
 	}
 
 	return 0;
+}
+
+static void set_clone_children(struct mntent *m)
+{
+	char path[MAXPATHLEN];
+	FILE *fout;
+	int ret;
+
+	if (!in_cgroup_list(m->mnt_opts, "cpuset"))
+		return;
+	ret = snprintf(path, MAXPATHLEN, "%s/cgroup.clone_children", m->mnt_dir);
+	if (ret < 0 || ret > MAXPATHLEN)
+		return;
+	fout = fopen(path, "w");
+	if (!fout)
+		return;
+	fprintf(fout, "1\n");
+	fclose(fout);
 }
 
 static bool have_visited(char *opts, char *visited, char *all_subsystems)
@@ -496,7 +488,7 @@ static bool have_visited(char *opts, char *visited, char *all_subsystems)
 static bool is_in_desclist(struct cgroup_desc *d, char *opts, char *all_subsystems)
 {
 	while (d) {
-		if (have_visited(opts, d->subsystems, all_subsystems)
+		if (have_visited(opts, d->subsystems, all_subsystems))
 			return true;
 		d = d->next;
 	}
@@ -506,7 +498,7 @@ static bool is_in_desclist(struct cgroup_desc *d, char *opts, char *all_subsyste
 static char *record_visited(char *opts, char *all_subsystems)
 {
 	char *s = NULL, *token, *str;
-	int oldlen = 0, newlen, ret, toklen;
+	int oldlen = 0, newlen, toklen;
 	char *visited = NULL;
 
 	for (str = strdupa(opts); (token = strtok_r(str, ",", &s)); str = NULL) {
@@ -516,7 +508,7 @@ static char *record_visited(char *opts, char *all_subsystems)
 		newlen = oldlen + toklen +  1; // ',' + token or token + '\0'
 		visited = realloc(visited, newlen);
 		if (!visited)
-			return -1;
+			return (char *)-ENOMEM;
 		if (oldlen)
 			strcat(visited, ",");
 		strcat(visited, token);
@@ -581,12 +573,12 @@ static char *get_cgroup_uselist()
 {
 	FILE *f;
 	char *line = NULL, *ret = NULL;
-	size_t sz = 0, retsz = 0;
+	size_t sz = 0, retsz = 0, newsz;
 
 	if ((f = fopen(LXC_GLOBAL_CONF, "r")) == NULL)
 		return NULL;
 	while (getline(&line, &sz, f) != -1) {
-		char *p = line[0];
+		char *p = line;
 		while (*p && isblank(*p))
 			p++;
 		if (strncmp(p, "lxc.cgroup.use", 14) != 0)
@@ -603,20 +595,20 @@ static char *get_cgroup_uselist()
 		if (retsz == 0)
 			newsz += 1;  // for trailing \0
 		// the last line in the file could lack \n
-		if (p[strlen(p)-1] != \n)
+		if (p[strlen(p)-1] != '\n')
 			newsz += 1;
 		ret = realloc(ret, newsz);
 		if (!ret) {
 			ERROR("Out of memory reading cgroup uselist");
 			fclose(f);
 			free(line);
-			return -ENOMEM;
+			return (char *)-ENOMEM;
 		}
 		if (retsz == 0)
 			strcpy(ret, p);
 		else
 			strcat(ret, p);
-		if (p[strlen(p)-1] != \n)
+		if (p[strlen(p)-1] != '\n')
 			ret[newsz-2] = '\0';
 		ret[newsz-1] = '\0';
 		retsz = newsz;
@@ -636,37 +628,10 @@ static bool is_in_uselist(char *uselist, struct mntent *m)
 		return false;
 	while (*uselist) {
 		p = index(uselist, '\n');
-		if (strncmp(mntent->mnt_dir, uselist, p-uselist) == 0)
+		if (strncmp(m->mnt_dir, uselist, p - uselist) == 0)
 			return true;
 		uselist = p+1;
 	}
-	return false;
-}
-
-/*
- * is_my_cgroup: check whether our pid is found in the passed-in cgroup tasks
- * file.
- * @path:  in full path to a cgroup tasks file
- * Note that in most cases the file will simply not exist, which is ok - it
- * just means that's not our cgroup.
- */
-static bool is_my_cgroup(char *path)
-{
-	int me = getpid(), cmppid;
-	FILE *f = fopen(path, "r");
-	char *line = NULL;
-	size_t sz = 0;
-
-	if (!f)
-		return false;
-	while (getline(&line, &sz, f) != -1) {
-		if (sscanf(line, "%d", &cmppid) == 1 && cmppid == me) {
-			fclose(f);
-			free(line);
-			return true;
-		}
-	}
-	fclose(f);
 	return false;
 }
 
@@ -717,10 +682,11 @@ found:
  * 2. Find a new free cgroup which is $path / $lxc_name with an
  *    optional '-$n' where n is an ever-increasing integer.
  */
-static char *find_free_cgroup(struct cgroup_desc *d, char *lxc_name)
+static char *find_free_cgroup(struct cgroup_desc *d, const char *lxc_name)
 {
-	char tail[20], cgpath[MAXPATHLEN], path[MAXPATHLEN];
-	int i = 0;
+	char tail[20], cgpath[MAXPATHLEN], *cgp, path[MAXPATHLEN];
+	int i = 0, ret;
+	size_t l;
 
 	if (!find_real_cgroup(d, cgpath))
 		return NULL;
@@ -736,11 +702,10 @@ static char *find_free_cgroup(struct cgroup_desc *d, char *lxc_name)
 	 */
 	cgp = cgpath;
 	while (cgp[0]) {
-		struct stat sb;
 		ret = snprintf(path, MAXPATHLEN, "%s%s/tasks", d->mntpt, cgp);
 		if (ret < 0 || ret >= MAXPATHLEN)
 			return NULL;
-		if (!is_my_cgroup(path)) {
+		if (!is_in_cgroup(getpid(), path)) {
 			// does not exist, try the next one
 			cgp = index(cgp, '/');
 			if (!cgp)
@@ -758,6 +723,8 @@ static char *find_free_cgroup(struct cgroup_desc *d, char *lxc_name)
 	tail[0] = '\0';
 	while (1) {
 		int freebytes;
+		struct stat sb;
+
 		if (!(cgp = rindex(path, '/'))) // can't be
 			return NULL;
 		freebytes = MAXPATHLEN - (cgp - path);
@@ -776,11 +743,11 @@ static char *find_free_cgroup(struct cgroup_desc *d, char *lxc_name)
 
 	l = strlen(cgpath);
 	ret = snprintf(cgpath + l, MAXPATHLEN - l, "/%s%s", lxc_name, tail);
-	if (ret < 0 || ret >= freebytes) {
+	if (ret < 0 || ret >= (MAXPATHLEN - l)) {
 		ERROR("Out of memory");
 		return NULL;
 	}
-	if ((d->realcgroup = strdup(cgpath) == NULL) {
+	if ((d->realcgroup = strdup(cgpath)) == NULL) {
 		ERROR("Out of memory");
 		return NULL;
 	}
@@ -811,16 +778,15 @@ static char *find_free_cgroup(struct cgroup_desc *d, char *lxc_name)
  */
 struct cgroup_desc *lxc_cgroup_path_create(const char *name)
 {
-	int i = 0, ret;
-	struct cgroup_desc *retdesc;
-	char path[MAXPATHLEN], tail[12];
+	struct cgroup_desc *retdesc = NULL, *newdesc = NULL;
+	char path[MAXPATHLEN];
 	FILE *file = NULL;
 	struct mntent mntent_r;
 	char buf[LARGE_MAXPATHLEN] = {0};
 	char *all_subsystems = get_all_subsystems();
 	char *cgroup_uselist = get_cgroup_uselist();
 
-	if (cgroup_uselist == -ENOMEM) {
+	if (cgroup_uselist == (char *)-ENOMEM) {
 		if (all_subsystems)
 			free(all_subsystems);
 		return NULL;
@@ -845,20 +811,26 @@ struct cgroup_desc *lxc_cgroup_path_create(const char *name)
 		if (strcmp(mntent_r.mnt_type, "cgroup"))
 			continue;
 
-		if (cgroup_uselist && !is_in_uselist(cgroup_uselist, mntent_r))
+		if (cgroup_uselist && !is_in_uselist(cgroup_uselist, &mntent_r))
 			continue;
 
 		/* make sure we haven't checked this subsystem already */
-		if (is_in_desclist(ret_desc, mntent_r.mnt_opts, all_subsystems))
+		if (is_in_desclist(retdesc, mntent_r.mnt_opts, all_subsystems))
 			continue;
 
 		if (!(newdesc = malloc(sizeof(struct cgroup_desc)))) {
 			ERROR("Out of memory reading cgroups");
 			goto fail;
 		}
+		newdesc->subsystems = record_visited(mntent_r.mnt_opts, all_subsystems);
+		if (newdesc->subsystems == (char *)-ENOMEM) {
+			ERROR("Out of memory reading cgroups");
+			free(newdesc);
+			newdesc = NULL;
+			goto fail;
+		}
 		newdesc->next = NULL;
 		newdesc->mntpt = strdup(mntent_r.mnt_dir);
-		newdesc->subsystems = record_visited(mntent_r.mnt_opts, all_subsystems);
 		newdesc->realcgroup = NULL;
 		newdesc->curcgroup = find_free_cgroup(newdesc, name);
 		if (!newdesc->mntpt || !newdesc->subsystems || !newdesc->curcgroup) {
@@ -894,6 +866,8 @@ fail:
 			free(newdesc->subsystems);
 		if (newdesc->curcgroup)
 			free(newdesc->curcgroup);
+		if (newdesc->realcgroup)
+			free(newdesc->realcgroup);
 		free(newdesc);
 	}
 	while (retdesc) {
@@ -905,39 +879,51 @@ fail:
 			free(t->subsystems);
 		if (t->curcgroup)
 			free(t->curcgroup);
+		if (t->realcgroup)
+			free(t->realcgroup);
 		free(t);
 
 	}
 	return NULL;
 }
 
-int lxc_cgroup_enter(struct cgroup_desc *cgroups, pid_t pid)
+static bool lxc_cgroup_enter_one(const char *dir, int pid)
 {
 	char path[MAXPATHLEN];
+	int ret;
+	FILE *fout;
 
+	ret = snprintf(path, MAXPATHLEN, "%s/tasks", dir);
+	if (ret < 0 || ret >= MAXPATHLEN) {
+		ERROR("Error entering cgroup");
+		return false;
+	}
+	fout = fopen(path, "w");
+	if (!fout) {
+		SYSERROR("Error entering cgroup");
+		return false;
+	}
+	if (fprintf(fout, "%d\n", (int)pid) < 0) {
+		ERROR("Error writing pid to %s to enter cgroup", path);
+		fclose(fout);
+		return false;
+	}
+	if (fclose(fout) < 0) {
+		SYSERROR("Error writing pid to %s to enter cgroup", path);
+		return false;
+	}
+
+	return true;
+}
+
+int lxc_cgroup_enter(struct cgroup_desc *cgroups, pid_t pid)
+{
 	while (cgroups) {
 		if (!cgroups->subsystems)
 			goto next;
-		ret = snprintf(path, MAXPATHLEN, "%s/tasks", cgroups->curcgroup);
-		if (ret < 0 || ret >= MAXPATHLEN) {
-			ERROR("Error entering cgroup");
-			return -1;
-		}
-		fout = fopen(path, "w");
-		if (!fout) {
-			SYSERROR("Error entering cgroup");
-			return -1;
-		}
-		if (fprintf(fout, "%d\n", (int)pid) < 0) {
-			ERROR("Error writing pid to %s", path);
-			fclose(fout);
-			return -1;
-		}
-		if (fclose(fout) < 0) {
-			SYSERROR("Error writing pid to %s", path);
-			return -1;
-		}
 
+		if (!lxc_cgroup_enter_one(cgroups->curcgroup, pid))
+			return -1;
 next:
 		cgroups = cgroups->next;
 	}
@@ -990,15 +976,16 @@ static int cgroup_rmdir(char *dirname)
 /*
  * for each mounted cgroup, destroy the cgroup for the container
  */
-int lxc_cgroup_destroy_desc(struct cgroup_desc *cgroups)
+void lxc_cgroup_destroy_desc(struct cgroup_desc *cgroups)
 {
 	while (cgroups) {
-		char *next = cgroups->next;
+		struct cgroup_desc *next = cgroups->next;
 		if (cgroup_rmdir(cgroups->curcgroup) < 0)
 			SYSERROR("removing cgroup directory %s", cgroups->curcgroup);
 		free(cgroups->mntpt);
 		free(cgroups->subsystems);
 		free(cgroups->curcgroup);
+		free(cgroups->realcgroup);
 		free(cgroups);
 		cgroups = next;
 	}
@@ -1015,11 +1002,10 @@ int lxc_cgroup_attach(pid_t pid, const char *name, const char *lxcpath)
 	/* read the list of subsystems from the kernel */
 	f = fopen("/proc/cgroups", "r");
 	if (!f)
-		return NULL;
+		return ret;
 
 	while (getline(&line, &len, f) != -1) {
 		char *c;
-		int oldlen, newlen, inc;
 
 		/* skip the first line */
 		if (first) {
@@ -1031,19 +1017,17 @@ int lxc_cgroup_attach(pid_t pid, const char *name, const char *lxcpath)
 		if (!c)
 			continue;
 		*c = '\0';
-		dirpath = lxc_cmd_get_cgroup_path(name, lxcpath);
+		dirpath = lxc_cgroup_path_get(line, name, lxcpath);
 		if (!dirpath)
 			continue;
 
 		INFO("joining pid %d to cgroup %s", pid, dirpath);
-		if (lxc_cgroup_enter(dirpath, pid)) {
+		if (lxc_cgroup_enter_one(dirpath, pid)) {
 			ERROR("Failed joining %d to %s\n", pid, dirpath);
-			goto out;
+			continue;
 		}
 	}
-	ret = 0;
 
-out:
 	if (line)
 		free(line);
 	fclose(f);
@@ -1055,7 +1039,7 @@ bool is_in_subcgroup(int pid, const char *subsystem, struct cgroup_desc *d)
 	char filepath[MAXPATHLEN], *line = NULL, v1[MAXPATHLEN], v2[MAXPATHLEN];
 	FILE *f;
 	int ret, junk;
-	size_t sz = 0, l1 = strlen(cgpath), l2;
+	size_t sz = 0, l1, l2;
 	char *end = index(subsystem, '.');
 	int len = end ? (end - subsystem) : strlen(subsystem);
 	const char *cgpath = NULL;
@@ -1063,6 +1047,7 @@ bool is_in_subcgroup(int pid, const char *subsystem, struct cgroup_desc *d)
 	while (d) {
 		if (in_cgroup_list("devices", d->subsystems)) {
 			cgpath = d->realcgroup;
+			l1 = strlen(cgpath);
 			break;
 		}
 		d = d->next;

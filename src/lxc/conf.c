@@ -1487,7 +1487,7 @@ static int setup_kmsg(const struct lxc_rootfs *rootfs,
 	return 0;
 }
 
-static int _setup_cgroup(const char *cgpath, struct lxc_list *cgroups,
+static int _setup_cgroup(struct lxc_handler *h, struct lxc_list *cgroups,
 			  int devices)
 {
 	struct lxc_list *iterator;
@@ -1501,10 +1501,9 @@ static int _setup_cgroup(const char *cgpath, struct lxc_list *cgroups,
 		cg = iterator->elem;
 
 		if (devices == !strncmp("devices", cg->subsystem, 7)) {
-			if (lxc_cgroup_set_bypath(cgpath, cg->subsystem,
-			    cg->value)) {
+			if (lxc_cgroup_set_value(h, cg->subsystem, cg->value)) {
 				ERROR("Error setting %s to %s for %s\n",
-				      cg->subsystem, cg->value, cgpath);
+				      cg->subsystem, cg->value, h->name);
 				goto out;
 			}
 		}
@@ -1518,14 +1517,14 @@ out:
 	return ret;
 }
 
-int setup_cgroup_devices(const char *cgpath, struct lxc_list *cgroups)
+int setup_cgroup_devices(struct lxc_handler *h, struct lxc_list *cgroups)
 {
-	return _setup_cgroup(cgpath, cgroups, 1);
+	return _setup_cgroup(h, cgroups, 1);
 }
 
-int setup_cgroup(const char *cgpath, struct lxc_list *cgroups)
+int setup_cgroup(struct lxc_handler *h, struct lxc_list *cgroups)
 {
-	return _setup_cgroup(cgpath, cgroups, 0);
+	return _setup_cgroup(h, cgroups, 0);
 }
 
 static void parse_mntopt(char *opt, unsigned long *flags, char **data)
