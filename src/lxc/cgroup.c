@@ -226,14 +226,21 @@ char *lxc_cgroup_path_get(const char *subsystem, const char *name,
 			return NULL;
 		if (!is_in_cgroup(initpid, path)) {
 			// does not exist, try the next one
-			cgp = index(cgp, '/');
+			cgp = index(cgp+1, '/');
 			if (!cgp)
 				break;
 			continue;
 		}
 	}
-	if (!cgp || !*cgp)
-		return NULL;
+	if (!cgp || !*cgp) {
+		// try just the path
+		ret = snprintf(pathp, MAXPATHLEN - (pathp - path), "/tasks");
+		if (ret < 0 || ret >= MAXPATHLEN)
+			return NULL;
+		if (!is_in_cgroup(initpid, path))
+			return NULL;
+		return strdup("/");
+	}
 	return strdup(path);
 }
 
@@ -511,6 +518,8 @@ static char *record_visited(char *opts, char *all_subsystems)
 			return (char *)-ENOMEM;
 		if (oldlen)
 			strcat(visited, ",");
+		else
+			*visited = '\0';
 		strcat(visited, token);
 	}
 
@@ -688,8 +697,10 @@ static char *find_free_cgroup(struct cgroup_desc *d, const char *lxc_name)
 	int i = 0, ret;
 	size_t l;
 
-	if (!find_real_cgroup(d, cgpath))
+	if (!find_real_cgroup(d, cgpath)) {
+		ERROR("Failed to find current cgroup");
 		return NULL;
+	}
 
 	/*
 	 * If d->mntpt is '/a/b/c/d', and the mountpoint is /x/y/z,
@@ -707,14 +718,22 @@ static char *find_free_cgroup(struct cgroup_desc *d, const char *lxc_name)
 			return NULL;
 		if (!is_in_cgroup(getpid(), path)) {
 			// does not exist, try the next one
-			cgp = index(cgp, '/');
+			cgp = index(cgp+1, '/');
 			if (!cgp)
 				break;
 			continue;
 		}
 	}
-	if (!cgp || !*cgp)
-		return NULL;
+	if (!cgp || !*cgp) {
+		// try just the path
+		ret = snprintf(path, MAXPATHLEN, "%s/tasks", d->mntpt);
+		if (ret < 0 || ret >= MAXPATHLEN)
+			return NULL;
+		if (!is_in_cgroup(getpid(), path)) {
+			INFO("did not find myself in %s\n", path);
+			return NULL;
+		}
+	}
 	// found it, path has our tasks file
 	if (strlen(path) + strlen(lxc_name) + 20 > MAXPATHLEN) {
 		ERROR("Error: cgroup path too long");
@@ -824,7 +843,7 @@ struct cgroup_desc *lxc_cgroup_path_create(const char *name)
 		}
 		newdesc->subsystems = record_visited(mntent_r.mnt_opts, all_subsystems);
 		if (newdesc->subsystems == (char *)-ENOMEM) {
-			ERROR("Out of memory reading cgroups");
+			ERROR("Out of memory recording cgroup subsystems");
 			free(newdesc);
 			newdesc = NULL;
 			goto fail;
@@ -833,7 +852,7 @@ struct cgroup_desc *lxc_cgroup_path_create(const char *name)
 		newdesc->mntpt = strdup(mntent_r.mnt_dir);
 		newdesc->realcgroup = NULL;
 		newdesc->curcgroup = find_free_cgroup(newdesc, name);
-		if (!newdesc->mntpt || !newdesc->subsystems || !newdesc->curcgroup) {
+		if (!newdesc->mntpt || !newdesc->curcgroup) {
 			ERROR("Out of memory reading cgroups");
 			goto fail;
 		}
