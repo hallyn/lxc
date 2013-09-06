@@ -2206,9 +2206,9 @@ int get_next_index(const char *lxcpath, char *cname)
 	struct stat sb;
 	int i = 0, ret;
 
-	fname = alloca(strlen(lxcpath) + strlen(cname) + 20);
+	fname = alloca(strlen(lxcpath) + 20);
 	while (1) {
-		sprintf(fname, "%s/%s_%d", lxcpath, cname, i);
+		sprintf(fname, "%s/snap%d", lxcpath, i);
 		ret = stat(fname, &sb);
 		if (ret != 0)
 			return i;
@@ -2431,6 +2431,9 @@ static bool lxcapi_snapshot_restore(struct lxc_container *c, char *snapname, cha
 		ERROR("Failed to find original backing store type");
 		return false;
 	}
+
+	if (!newname)
+		newname = c->name;
 	if (strcmp(c->name, newname) == 0) {
 		if (!lxcapi_destroy(c)) {
 			ERROR("Could not destroy existing container %s", newname);
