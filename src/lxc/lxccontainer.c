@@ -2284,11 +2284,6 @@ static int lxcapi_snapshot(struct lxc_container *c, char *commentfile)
 	return i;
 }
 
-static struct lxc_container *lxcsnap_open(struct lxc_snapshot *s)
-{
-	return NULL;
-}
-
 static void lxcsnap_free(struct lxc_snapshot *s)
 {
 	if (s->name)
@@ -2390,7 +2385,6 @@ static int lxcapi_snapshot_list(struct lxc_container *c, struct lxc_snapshot **r
 			goto out_free;
 		}
 		snaps = nsnaps;
-		snaps[count].open = lxcsnap_open;
 		snaps[count].free = lxcsnap_free;
 		snaps[count].name = strdup(direntp->d_name);
 		if (!snaps[count].name)

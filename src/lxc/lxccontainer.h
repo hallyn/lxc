@@ -226,7 +226,6 @@ struct lxc_snapshot {
 	char *comment_pathname;
 	char *timestamp;
 	char *lxcpath;
-	struct lxc_container *(*open)(struct lxc_snapshot *);
 	void (*free)(struct lxc_snapshot *);
 };
 
