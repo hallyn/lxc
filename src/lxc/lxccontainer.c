@@ -2296,7 +2296,7 @@ static void lxcsnap_free(struct lxc_snapshot *s)
 		free(s->lxcpath);
 }
 
-static char *get_snapcomment(char* snappath, char *name)
+static char *get_snapcomment_path(char* snappath, char *name)
 {
 	// $snappath/$name/comment
 	int ret, len = strlen(snappath) + strlen(name) + 10;
@@ -2394,7 +2394,7 @@ static int lxcapi_snapshot_list(struct lxc_container *c, struct lxc_snapshot **r
 			free(snaps[count].name);
 			goto out_free;
 		}
-		snaps[count].comment_pathname = get_snapcomment(snappath, direntp->d_name);
+		snaps[count].comment_pathname = get_snapcomment_path(snappath, direntp->d_name);
 		snaps[count].timestamp = get_timestamp(snappath, direntp->d_name);
 		count++;
 	}
