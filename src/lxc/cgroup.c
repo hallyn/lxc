@@ -535,6 +535,48 @@ struct cgroup_process_info *lxc_cgroup_process_info_get_self(struct cgroup_meta_
 	return i;
 }
 
+/*
+ * If a controller has ns cgroup mounted, then in that cgroup the handler->pid
+ * is already in a new cgroup named after the pid.  'mnt' is passed in as
+ * the full current cgroup.  Say that is /sys/fs/cgroup/lxc/2975 and the container
+ * name is c1. .  We want to rename the cgroup directory to /sys/fs/cgroup/lxc/c1,
+ * and return the string /sys/fs/cgroup/lxc/c1.
+ */
+static char *cgroup_rename_nsgroup(const char *oldname, const char *name)
+{
+	char *dir;
+	char *newname, *p;
+	int ret, len;
+
+	dir = alloca(strlen(oldname)+1);
+	strcpy(dir, oldname);
+
+	p = strrchr(dir, '/');
+	if (!p) {
+		ERROR("bad path %s", oldname);
+		return NULL;
+	}
+	*p = '\0';
+	len = strlen(dir) + strlen(name) + 2;
+	newname = malloc(len);
+	if (!newname) {
+		SYSERROR("Out of memory");
+		return NULL;
+	}
+	ret = snprintf(newname, len, "%s/%s", dir, name);
+	if (ret >= MAXPATHLEN)
+		return NULL;
+
+	if (rename(oldname, newname)) {
+		SYSERROR("failed to rename cgroup %s->%s", oldname, newname);
+		return NULL;
+	}
+
+	DEBUG("'%s' renamed to '%s'", oldname, newname);
+
+	return newname;
+}
+
 /* create a new cgroup */
 extern struct cgroup_process_info *lxc_cgroup_create(const char *name, const char *path_pattern, struct cgroup_meta_data *meta_data, const char *sub_pattern)
 {
@@ -669,6 +711,9 @@ extern struct cgroup_process_info *lxc_cgroup_create(const char *name, const cha
 		 */
 		for (i = 0, info_ptr = base_info; info_ptr; info_ptr = info_ptr->next, i++) {
 			char *parts2[3];
+
+			if (lxc_string_in_array("ns", (const char **)info_ptr->hierarchy->subsystems))
+				continue;
 			current_entire_path = NULL;
 
 			parts2[0] = !strcmp(info_ptr->cgroup_path, "/") ? "" : info_ptr->cgroup_path;
@@ -753,9 +798,22 @@ extern struct cgroup_process_info *lxc_cgroup_create(const char *name, const cha
 
 	/* we're done, now update the paths */
 	for (i = 0, info_ptr = base_info; info_ptr; info_ptr = info_ptr->next, i++) {
-		free(info_ptr->cgroup_path);
-		info_ptr->cgroup_path = new_cgroup_paths[i];
-		info_ptr->cgroup_path_sub = new_cgroup_paths_sub[i];
+		/*
+		 * For any path which has ns cgroup mounted, handler->pid is already
+		 * moved into a container called '%d % (handler->pid)'.  Rename it to
+		 * the cgroup name and record that.
+		 */
+		if (lxc_string_in_array("ns", (const char **)info_ptr->hierarchy->subsystems)) {
+			char *tmp = cgroup_rename_nsgroup(info_ptr->cgroup_path, name);
+			if (!tmp)
+				goto out_initial_error;
+			free(info_ptr->cgroup_path);
+			info_ptr->cgroup_path = tmp;
+		} else {
+			free(info_ptr->cgroup_path);
+			info_ptr->cgroup_path = new_cgroup_paths[i];
+			info_ptr->cgroup_path_sub = new_cgroup_paths_sub[i];
+		}
 	}
 	/* don't use lxc_free_array since we used the array members
 	 * to store them in our result...
