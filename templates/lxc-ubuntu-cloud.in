@@ -371,7 +371,7 @@ do_extract_rootfs() {
     echo "Extracting container rootfs"
     mkdir -p $rootfs
     cd $rootfs
-    tar -zxf $cache/$filename
+    tar --numeric-uid -xpzf "$cache/$filename"
 }
 
 if [ -n "$tarball" ]; then
