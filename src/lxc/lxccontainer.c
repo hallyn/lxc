@@ -2744,3 +2744,158 @@ int lxc_get_wait_states(const char **states)
 			states[i] = lxc_state2str(i);
 	return MAX_STATE;
 }
+
+
+bool add_to_clist(struct lxc_container ***list, struct lxc_container *c, int pos)
+{
+	struct lxc_container **newlist = realloc(*list, pos * sizeof(struct lxc_container *));
+	if (!newlist) {
+		free(*list);
+		*list = NULL;
+		ERROR("Out of memory");
+		return false;
+	}
+
+	*list = newlist;
+	newlist[pos-1] = c;
+	return true;
+}
+
+int list_defined_containers(const char *lxcpath, struct lxc_container ***cret)
+{
+	DIR *dir;
+	int nfound = 0;
+	struct dirent dirent, *direntp;
+
+	if (!lxcpath)
+		lxcpath = default_lxc_path();
+
+	process_lock();
+	dir = opendir(lxcpath);
+	process_unlock();
+
+	if (!dir) {
+		SYSERROR("opendir on lxcpath");
+		return -1;
+	}
+
+	if (cret)
+		*cret = NULL;
+
+	while (!readdir_r(dir, &dirent, &direntp)) {
+		if (!direntp)
+			break;
+		if (!strcmp(direntp->d_name, "."))
+			continue;
+		if (!strcmp(direntp->d_name, ".."))
+			continue;
+
+		struct lxc_container *c = lxc_container_new(direntp->d_name, lxcpath);
+		if (!c)
+			continue;
+		if (!lxcapi_is_defined(c)) {
+			lxc_container_put(c);
+			continue;
+		}
+
+		nfound++;
+
+		if (cret) {
+			if (!add_to_clist(cret, c, nfound))
+				goto free_bad;
+		} else {
+			lxc_container_put(c);
+		}
+	}
+
+	process_lock();
+	closedir(dir);
+	process_unlock();
+	return nfound;
+
+free_bad:
+	if (cret && *cret) {
+		while (--nfound >= 0)
+			lxc_container_put((*cret)[nfound]);
+		free(*cret);
+	}
+	process_lock();
+	closedir(dir);
+	process_unlock();
+	return -1;
+}
+
+int list_active_containers(const char *lxcpath, struct lxc_container ***cret)
+{
+	int nfound = 0;
+	int lxcpath_len;
+	char *line = NULL;
+	size_t len = 0;
+	struct lxc_container *c;
+
+	if (!lxcpath)
+		lxcpath = default_lxc_path();
+	lxcpath_len = strlen(lxcpath);
+	if (cret)
+		*cret = NULL;
+	process_lock();
+	FILE *f = fopen("/proc/net/unix", "r");
+	process_unlock();
+	if (!f)
+		return -1;
+
+	while (getline(&line, &len, f) != -1) {
+		char *p = rindex(line, ' '), *p2;
+		if (!p)
+			continue;
+		p++;
+		if (*p != 0x40)
+			continue;
+		p++;
+		if (strncmp(p, lxcpath, lxcpath_len) != 0)
+			continue;
+		p += lxcpath_len;
+		while (*p == '/')
+			p++;
+		// Now p is the start of lxc_name
+		p2 = index(p, '/');
+		if (!p2 || strncmp(p2, "/command", 8) != 0)
+			continue;
+		*p2 = '\0';
+		c = lxc_container_new(p, lxcpath);
+		if (!c)
+			continue;
+		
+		/* 
+		 * If this is an anonymous container, then is_defined *can*
+		 * return false.  So we don't do that check.  Count on the
+		 * fact that the command socket exists.
+		 */
+
+		nfound++;
+
+		if (cret) {
+			if (!add_to_clist(cret, c, nfound))
+				goto free_bad;
+		} else {
+			lxc_container_put(c);
+		}
+
+	}
+
+	process_lock();
+	fclose(f);
+	process_unlock();
+	return nfound;
+
+free_bad:
+	if (cret && *cret) {
+		while (--nfound >= 0)
+			lxc_container_put((*cret)[nfound]);
+		free(*cret);
+	}
+	process_lock();
+	fclose(f);
+	process_unlock();
+	return -1;
+}
