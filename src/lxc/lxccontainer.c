@@ -2853,9 +2853,11 @@ int list_defined_containers(const char *lxcpath, char ***names, struct lxc_conta
 			continue;
 		}
 
-		nfound++;
-		if (!add_to_clist(cret, c, nfound))
+		if (!add_to_clist(cret, c, nfound)) {
+			lxc_container_put(c);
 			goto free_bad;
+		}
+		nfound++;
 	}
 
 	process_lock();
@@ -2949,9 +2951,11 @@ int list_active_containers(const char *lxcpath, char ***names, struct lxc_contai
 		 * fact that the command socket exists.
 		 */
 
-		nfound++;
-		if (!add_to_clist(cret, c, nfound))
+		if (!add_to_clist(cret, c, nfound)) {
+			lxc_container_put(c);
 			goto free_bad;
+		}
+		nfound++;
 	}
 
 	process_lock();
