@@ -2786,10 +2786,14 @@ static bool add_to_clist(struct lxc_container ***list, struct lxc_container *c, 
 	return true;
 }
 
+/*
+ * These next two could probably be done smarter with reusing a common function
+ * with different iterators and tests...
+ */
 int list_defined_containers(const char *lxcpath, char ***names, struct lxc_container ***cret)
 {
 	DIR *dir;
-	int nfound = 0;
+	int i, cfound = 0, nfound = 0;
 	struct dirent dirent, *direntp;
 	struct lxc_container *c;
 
@@ -2822,11 +2826,10 @@ int list_defined_containers(const char *lxcpath, char ***names, struct lxc_conta
 			continue;
 
 		if (names) {
-			if (!add_to_names(names, direntp->d_name, nfound)) {
-				nfound--;
+			if (!add_to_names(names, direntp->d_name, cfound))
 				goto free_bad;
-			}
 		}
+		cfound++;
 
 		if (!cret) {
 			nfound++;
@@ -2835,23 +2838,24 @@ int list_defined_containers(const char *lxcpath, char ***names, struct lxc_conta
 
 		c = lxc_container_new(direntp->d_name, lxcpath);
 		if (!c) {
+			INFO("Container %s:%s has a config but could not be loaded",
+				lxcpath, direntp->d_name);
 			if (names)
-				free((*names)[nfound]);
+				free((*names)[cfound--]);
 			continue;
 		}
 		if (!lxcapi_is_defined(c)) {
+			INFO("Container %s:%s has a config but is not defined",
+				lxcpath, direntp->d_name);
 			if (names)
-				free((*names)[nfound]);
+				free((*names)[cfound--]);
 			lxc_container_put(c);
 			continue;
 		}
 
-		if (!add_to_clist(cret, c, nfound)) {
-			if (names)
-				free((*names)[nfound]);
-			goto free_bad;
-		}
 		nfound++;
+		if (!add_to_clist(cret, c, nfound))
+			goto free_bad;
 	}
 
 	process_lock();
@@ -2861,14 +2865,13 @@ int list_defined_containers(const char *lxcpath, char ***names, struct lxc_conta
 
 free_bad:
 	if (names && *names) {
-		int i;
-		for (i=0; i<nfound; i++)
+		for (i=0; i<cfound; i++)
 			free((*names)[i]);
 		free(*names);
 	}
 	if (cret && *cret) {
-		while (nfound >= 0)
-			lxc_container_put((*cret)[nfound--]);
+		for (i=0; i<nfound; i++)
+			lxc_container_put((*cret)[i]);
 		free(*cret);
 	}
 	process_lock();
@@ -2879,7 +2882,7 @@ free_bad:
 
 int list_active_containers(const char *lxcpath, char ***names, struct lxc_container ***cret)
 {
-	int nfound = 0;
+	int i, cfound = 0, nfound = 0;
 	int lxcpath_len;
 	char *line = NULL;
 	size_t len = 0;
@@ -2888,6 +2891,7 @@ int list_active_containers(const char *lxcpath, char ***names, struct lxc_contai
 	if (!lxcpath)
 		lxcpath = default_lxc_path();
 	lxcpath_len = strlen(lxcpath);
+
 	if (cret)
 		*cret = NULL;
 	if (names)
@@ -2920,11 +2924,10 @@ int list_active_containers(const char *lxcpath, char ***names, struct lxc_contai
 		*p2 = '\0';
 
 		if (names) {
-			if (!add_to_names(names, p, nfound)) {
-				nfound--;
+			if (!add_to_names(names, p, nfound))
 				goto free_bad;
-			}
 		}
+		cfound++;
 
 		if (!cret) {
 			nfound++;
@@ -2933,8 +2936,10 @@ int list_active_containers(const char *lxcpath, char ***names, struct lxc_contai
 
 		c = lxc_container_new(p, lxcpath);
 		if (!c) {
+			INFO("Container %s:%s is running but could not be loaded",
+				lxcpath, p);
 			if (names)
-				free((*names)[nfound])
+				free((*names)[cfound--]);
 			continue;
 		}
 		
@@ -2944,13 +2949,9 @@ int list_active_containers(const char *lxcpath, char ***names, struct lxc_contai
 		 * fact that the command socket exists.
 		 */
 
-		if (!add_to_clist(cret, c, nfound)) {
-			lxc_container_put(c);
-			if (names)
-				free((*names)[nfound])
-			goto free_bad;
-		}
 		nfound++;
+		if (!add_to_clist(cret, c, nfound))
+			goto free_bad;
 	}
 
 	process_lock();
@@ -2960,14 +2961,13 @@ int list_active_containers(const char *lxcpath, char ***names, struct lxc_contai
 
 free_bad:
 	if (names && *names) {
-		int i;
-		for (i=0; i<=nfound; i++)
+		for (i=0; i<cfound; i++)
 			free((*names)[i]);
 		free(*names);
 	}
 	if (cret && *cret) {
-		while (nfound >= 0)
-			lxc_container_put((*cret)[nfound--]);
+		for (i=0; i<nfound; i++)
+			lxc_container_put((*cret)[i]);
 		free(*cret);
 	}
 	process_lock();
