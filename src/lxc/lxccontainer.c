@@ -69,6 +69,19 @@ static bool file_exists(char *f)
 	return stat(f, &statbuf) == 0;
 }
 
+static bool config_file_exists(const char *lxcpath, const char *cname)
+{
+	/* $lxcpath + '/' + $cname + '/config' + \0 */
+	int ret, len = strlen(lxcpath) + strlen(cname) + 9;
+	char *fname = alloca(len);
+
+	ret = snprintf(fname, len,  "%s/%s/config", lxcpath, cname);
+	if (ret < 0 || ret >= len)
+		return false;
+
+	return file_exists(fname);
+}
+
 /*
  * A few functions to help detect when a container creation failed.
  * If a container creation was killed partway through, then trying
@@ -2746,9 +2759,25 @@ int lxc_get_wait_states(const char **states)
 }
 
 
-bool add_to_clist(struct lxc_container ***list, struct lxc_container *c, int pos)
+static bool add_to_names(char ***names, char *cname, int pos)
 {
-	struct lxc_container **newlist = realloc(*list, pos * sizeof(struct lxc_container *));
+	char **newnames = realloc(*names, (pos+1) * sizeof(char *));
+	if (!newnames) {
+		free(*names);
+		*names = NULL;
+		ERROR("Out of memory");
+		return false;
+	}
+	*names = newnames;
+	newnames[pos] = strdup(cname);
+	if (!newnames[pos])
+		return false;
+	return true;
+}
+
+static bool add_to_clist(struct lxc_container ***list, struct lxc_container *c, int pos)
+{
+	struct lxc_container **newlist = realloc(*list, (pos+1) * sizeof(struct lxc_container *));
 	if (!newlist) {
 		free(*list);
 		*list = NULL;
@@ -2757,15 +2786,16 @@ bool add_to_clist(struct lxc_container ***list, struct lxc_container *c, int pos
 	}
 
 	*list = newlist;
-	newlist[pos-1] = c;
+	newlist[pos] = c;
 	return true;
 }
 
-int list_defined_containers(const char *lxcpath, struct lxc_container ***cret)
+int list_defined_containers(const char *lxcpath, char ***names, struct lxc_container ***cret)
 {
 	DIR *dir;
 	int nfound = 0;
 	struct dirent dirent, *direntp;
+	struct lxc_container *c;
 
 	if (!lxcpath)
 		lxcpath = default_lxc_path();
@@ -2781,6 +2811,8 @@ int list_defined_containers(const char *lxcpath, struct lxc_container ***cret)
 
 	if (cret)
 		*cret = NULL;
+	if (names)
+		*names = NULL;
 
 	while (!readdir_r(dir, &dirent, &direntp)) {
 		if (!direntp)
@@ -2790,22 +2822,40 @@ int list_defined_containers(const char *lxcpath, struct lxc_container ***cret)
 		if (!strcmp(direntp->d_name, ".."))
 			continue;
 
-		struct lxc_container *c = lxc_container_new(direntp->d_name, lxcpath);
-		if (!c)
+		if (!config_file_exists(lxcpath, direntp->d_name))
 			continue;
-		if (!lxcapi_is_defined(c)) {
-			lxc_container_put(c);
-			continue;
-		}
 
-		nfound++;
-
-		if (cret) {
-			if (!add_to_clist(cret, c, nfound))
+		if (names) {
+			if (!add_to_names(names, direntp->d_name, nfound)) {
+				nfound--;
 				goto free_bad;
-		} else {
-			lxc_container_put(c);
+			}
 		}
+
+		if (!cret) {
+			nfound++;
+			continue;
+		}
+
+		c = lxc_container_new(direntp->d_name, lxcpath);
+		if (!c) {
+			if (names)
+				free((*names)[nfound]);
+			continue;
+		}
+		if (!lxcapi_is_defined(c)) {
+			if (names)
+				free((*names)[nfound]);
+			lxc_container_put(c);
+			continue;
+		}
+
+		if (!add_to_clist(cret, c, nfound)) {
+			if (names)
+				free((*names)[nfound]);
+			goto free_bad;
+		}
+		nfound++;
 	}
 
 	process_lock();
@@ -2814,9 +2864,15 @@ int list_defined_containers(const char *lxcpath, struct lxc_container ***cret)
 	return nfound;
 
 free_bad:
+	if (names && *names) {
+		int i;
+		for (i=0; i<nfound; i++)
+			free((*names)[i]);
+		free(*names);
+	}
 	if (cret && *cret) {
-		while (--nfound >= 0)
-			lxc_container_put((*cret)[nfound]);
+		while (nfound >= 0)
+			lxc_container_put((*cret)[nfound--]);
 		free(*cret);
 	}
 	process_lock();
@@ -2825,7 +2881,7 @@ free_bad:
 	return -1;
 }
 
-int list_active_containers(const char *lxcpath, struct lxc_container ***cret)
+int list_active_containers(const char *lxcpath, char ***names, struct lxc_container ***cret)
 {
 	int nfound = 0;
 	int lxcpath_len;
@@ -2838,6 +2894,9 @@ int list_active_containers(const char *lxcpath, struct lxc_container ***cret)
 	lxcpath_len = strlen(lxcpath);
 	if (cret)
 		*cret = NULL;
+	if (names)
+		*names = NULL;
+
 	process_lock();
 	FILE *f = fopen("/proc/net/unix", "r");
 	process_unlock();
@@ -2857,14 +2916,31 @@ int list_active_containers(const char *lxcpath, struct lxc_container ***cret)
 		p += lxcpath_len;
 		while (*p == '/')
 			p++;
+
 		// Now p is the start of lxc_name
 		p2 = index(p, '/');
 		if (!p2 || strncmp(p2, "/command", 8) != 0)
 			continue;
 		*p2 = '\0';
-		c = lxc_container_new(p, lxcpath);
-		if (!c)
+
+		if (names) {
+			if (!add_to_names(names, p, nfound)) {
+				nfound--;
+				goto free_bad;
+			}
+		}
+
+		if (!cret) {
+			nfound++;
 			continue;
+		}
+
+		c = lxc_container_new(p, lxcpath);
+		if (!c) {
+			if (names)
+				free((*names)[nfound])
+			continue;
+		}
 		
 		/* 
 		 * If this is an anonymous container, then is_defined *can*
@@ -2872,15 +2948,13 @@ int list_active_containers(const char *lxcpath, struct lxc_container ***cret)
 		 * fact that the command socket exists.
 		 */
 
-		nfound++;
-
-		if (cret) {
-			if (!add_to_clist(cret, c, nfound))
-				goto free_bad;
-		} else {
+		if (!add_to_clist(cret, c, nfound)) {
 			lxc_container_put(c);
+			if (names)
+				free((*names)[nfound])
+			goto free_bad;
 		}
-
+		nfound++;
 	}
 
 	process_lock();
@@ -2889,9 +2963,15 @@ int list_active_containers(const char *lxcpath, struct lxc_container ***cret)
 	return nfound;
 
 free_bad:
+	if (names && *names) {
+		int i;
+		for (i=0; i<=nfound; i++)
+			free((*names)[i]);
+		free(*names);
+	}
 	if (cret && *cret) {
-		while (--nfound >= 0)
-			lxc_container_put((*cret)[nfound]);
+		while (nfound >= 0)
+			lxc_container_put((*cret)[nfound--]);
 		free(*cret);
 	}
 	process_lock();

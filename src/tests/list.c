@@ -32,7 +32,7 @@ int main(int argc, char *argv[])
 
 	n = list_defined_containers(lxcpath, NULL);
 	printf("Found %d defined containers\n", n);
-	n2 = list_defined_containers(lxcpath, &clist);
+	n2 = list_defined_containers(lxcpath, NULL, &clist);
 	if (n2 != n)
 		printf("Warning: first call returned %d, second %d\n", n, n2);
 	for (n=0; n<n2; n++) {
@@ -44,7 +44,7 @@ int main(int argc, char *argv[])
 
 	n = list_active_containers(lxcpath, NULL);
 	printf("Found %d active containers\n", n);
-	n2 = list_active_containers(lxcpath, &clist);
+	n2 = list_active_containers(lxcpath, NULL, &clist);
 	if (n2 != n)
 		printf("Warning: first call returned %d, second %d\n", n, n2);
 	for (n=0; n<n2; n++) {
