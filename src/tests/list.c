@@ -25,33 +25,86 @@ int main(int argc, char *argv[])
 {
 	char *lxcpath = NULL;
 	struct lxc_container **clist;
-	int n, n2;
+	char **names;
+	int i, n, n2;
 
 	if (argc > 1)
 		lxcpath = argv[1];
 
-	n = list_defined_containers(lxcpath, NULL);
+	printf("Counting defined containers only\n");
+	n = list_defined_containers(lxcpath, NULL, NULL);
 	printf("Found %d defined containers\n", n);
+	printf("Looking for defined containers only\n");
 	n2 = list_defined_containers(lxcpath, NULL, &clist);
 	if (n2 != n)
 		printf("Warning: first call returned %d, second %d\n", n, n2);
-	for (n=0; n<n2; n++) {
-		struct lxc_container *c = clist[n];
+	for (i=0; i<n2; i++) {
+		struct lxc_container *c = clist[i];
 		printf("Found defined container %s\n", c->name);
 		lxc_container_put(c);
 	}
 	free(clist);
 
-	n = list_active_containers(lxcpath, NULL);
+	printf("Looking for defined names only\n");
+	n2 = list_defined_containers(lxcpath, &names, NULL);
+	if (n2 != n)
+		printf("Warning: first call returned %d, second %d\n", n, n2);
+	for (i=0; i<n2; i++) {
+		printf("Found defined container %s\n", names[i]);
+		free(names[i]);
+	}
+	free(names);
+
+	printf("Looking for defined names and containers\n");
+	n2 = list_defined_containers(lxcpath, &names, &clist);
+	if (n2 != n)
+		printf("Warning: first call returned %d, second %d\n", n, n2);
+	for (i=0; i<n2; i++) {
+		struct lxc_container *c = clist[i];
+		printf("Found defined container %s, name was %s\n", c->name, names[i]);
+		free(names[i]);
+		lxc_container_put(c);
+	}
+	free(names);
+	free(clist);
+
+
+	printf("Counting active containers only\n");
+	n = list_active_containers(lxcpath, NULL, NULL);
 	printf("Found %d active containers\n", n);
+	printf("Looking for active containers only\n");
 	n2 = list_active_containers(lxcpath, NULL, &clist);
 	if (n2 != n)
 		printf("Warning: first call returned %d, second %d\n", n, n2);
-	for (n=0; n<n2; n++) {
-		printf("Found active container %s\n", clist[n]->name);
-		lxc_container_put(clist[n]);
+	for (i=0; i<n2; i++) {
+		printf("Found active container %s\n", clist[i]->name);
+		lxc_container_put(clist[i]);
 	}
 	free(clist);
+
+	printf("Looking for active names only\n");
+	n2 = list_active_containers(lxcpath, &names, NULL);
+	if (n2 != n)
+		printf("Warning: first call returned %d, second %d\n", n, n2);
+	for (i=0; i<n2; i++) {
+		printf("Found active container %s\n", names[i]);
+		free(names[i]);
+	}
+	free(names);
+
+	printf("Looking for active names and containers\n");
+	n2 = list_active_containers(lxcpath, &names, &clist);
+	if (n2 != n)
+		printf("Warning: first call returned %d, second %d\n", n, n2);
+	for (i=0; i<n2; i++) {
+		struct lxc_container *c = clist[i];
+		printf("Found active container %s, name was %s\n", c->name, names[i]);
+		free(names[i]);
+		lxc_container_put(c);
+	}
+	free(names);
+	free(clist);
+
 
 	exit(0);
 }
