@@ -2763,8 +2763,6 @@ static bool add_to_names(char ***names, char *cname, int pos)
 {
 	char **newnames = realloc(*names, (pos+1) * sizeof(char *));
 	if (!newnames) {
-		free(*names);
-		*names = NULL;
 		ERROR("Out of memory");
 		return false;
 	}
@@ -2779,8 +2777,6 @@ static bool add_to_clist(struct lxc_container ***list, struct lxc_container *c, 
 {
 	struct lxc_container **newlist = realloc(*list, (pos+1) * sizeof(struct lxc_container *));
 	if (!newlist) {
-		free(*list);
-		*list = NULL;
 		ERROR("Out of memory");
 		return false;
 	}
