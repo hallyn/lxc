@@ -94,7 +94,8 @@
 
 void usage(char *me, bool fail)
 {
-	fprintf(stderr, "Usage: %s pid type bridge\n", me);
+	fprintf(stderr, "Usage: %s pid type bridge nicname\n", me);
+	fprintf(stderr, " nicname is the name to use inside the container\n");
 	exit(fail ? 1 : 0);
 }
 
@@ -538,7 +539,7 @@ int lxc_netdev_delete_by_name(const char *name)
 
 #endif
 
-bool create_nic(char *nic, char *br, char *pidstr)
+bool create_nic(char *nic, char *br, char *pidstr, char *vethname)
 {
 #if ISTEST
 	char path[200];
@@ -558,7 +559,13 @@ bool create_nic(char *nic, char *br, char *pidstr)
 
 	ret = snprintf(veth1buf, IFNAMSIZ, "%s", nic);
 	if (ret < 0 || ret >= IFNAMSIZ) {
-		fprintf(stderr, "nic name too long\n");
+		fprintf(stderr, "host nic name too long\n");
+		exit(1);
+	}
+
+	ret = snprintf(veth2buf, IFNAMSIZ, "%s", vethname);
+	if (ret < 0 || ret >= IFNAMSIZ) {
+		fprintf(stderr, "container nic name too long\n");
 		exit(1);
 	}
 
@@ -588,14 +595,20 @@ out_del:
 #endif
 }
 
-void get_new_nicname(char **dest, char *br, char *pid)
+/*
+ * Get a new nic.
+ * vethname is the name to use inside the container.
+ * *dest will container the name (lxcuser-%d) which is attached
+ * on the host to the lxc bridge
+ */
+void get_new_nicname(char **dest, char *br, char *pid, char *vethname)
 {
 	int i = 0;
 	// TODO - speed this up.  For large installations we won't
 	// want n stats for every nth container startup.
 	while (1) {
 		sprintf(*dest, "lxcuser-%d", i);
-		if (!nic_exists(*dest) && create_nic(*dest, br, pid))
+		if (!nic_exists(*dest) && create_nic(*dest, br, pid, vethname))
 			return;
 		i++;
 	}
@@ -670,8 +683,9 @@ int count_entries(char *buf, off_t len, char *me, char *t, char *br)
 /*
  * The dbfile has lines of the format:
  * user type bridge nicname
+ * vethname, for veth, is the name to use inside the container.
  */
-bool get_nic_if_avail(int fd, char *me, char *pid, char *intype, char *br, int allowed, char **nicname)
+bool get_nic_if_avail(int fd, char *me, char *pid, char *intype, char *br, int allowed, char **nicname, char *vethname)
 {
 	off_t len, slen;
 	struct stat sb;
@@ -695,7 +709,7 @@ bool get_nic_if_avail(int fd, char *me, char *pid, char *intype, char *br, int a
 	}
 
 
-	get_new_nicname(nicname, br, pid);
+	get_new_nicname(nicname, br, pid, vethname);
 	/* me  ' ' intype ' ' br ' ' *nicname + '\n' + '\0' */
 	slen = strlen(me) + strlen(intype) + strlen(br) + strlen(*nicname) + 5;
 	newline = alloca(slen);
@@ -748,14 +762,19 @@ int main(int argc, char *argv[])
 	bool gotone = false;
 	char *me, *buf = alloca(400);
 	char *nicname = alloca(40);
+	char *vethname;
 
 	if ((me = get_username(&buf)) == NULL) {
 		fprintf(stderr, "Failed to get username\n");
 		exit(1);
 	}
 
-	if (argc != 4)
+	if (argc < 4)
 		usage(argv[0], true);
+	if (argc >= 5)
+		vethname = argv[4];
+	else
+		vethname = "eth0";
 
 	if (!create_db_dir(DB_FILE)) {
 		fprintf(stderr, "Failed to create directory for db file\n");
@@ -769,7 +788,7 @@ int main(int argc, char *argv[])
 
 	n = get_alloted(me, argv[2], argv[3]);
 	if (n > 0)
-		gotone = get_nic_if_avail(fd, me, argv[1], argv[2], argv[3], n, &nicname);
+		gotone = get_nic_if_avail(fd, me, argv[1], argv[2], argv[3], n, &nicname, vethname);
 	close(fd);
 	if (!gotone) {
 		fprintf(stderr, "Quota reached\n");
