@@ -512,6 +512,7 @@ AC_CONFIG_FILES([
 	templates/lxc-archlinux
 	templates/lxc-alpine
 	templates/lxc-plamo
+	templates/lxc-tarball
 
 	src/Makefile
 	src/lxc/Makefile

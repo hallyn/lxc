@@ -14,4 +14,5 @@ templates_SCRIPTS = \
 	lxc-archlinux \
 	lxc-alpine \
 	lxc-cirros \
-	lxc-plamo
+	lxc-plamo \
+	lxc-tarball
