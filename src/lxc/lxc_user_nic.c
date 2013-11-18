@@ -859,6 +859,37 @@ out_err:
 	return -1;
 }
 
+static int get_task_ppid(int pid)
+{
+	int ret;
+	char s[200];
+	FILE *f;
+	char *line = NULL;
+	size_t len = 0;
+
+	ret = snprintf(s, 200, "/proc/%d/status", pid);
+	if (ret < 0 || ret >= 200)  // can't happen
+		return -1;
+	if ((f = fopen(s, "r")) == NULL) {
+		fprintf(stderr, "Failed opening %s: %s\n", s, strerror(errno));
+		return -1;
+	}
+	while ((getline(&line, &len, f)) != -1) {
+		if (strncmp(line, "PPid:", 5) != 0)
+			continue;
+		errno = 0;
+		ret = strtol(line + 5, NULL, 10);
+		if (errno) {
+			fprintf(stderr, "Failed reading ppid\n");
+			return -1;
+		}
+		fclose(f);
+		return ret;
+	}
+	fclose(f);
+	return -1;
+}
+
 /*
  * If the caller (real uid, not effective uid) may read the
  * /proc/pid/net/ns, then it is either the caller's netns or one
@@ -866,16 +897,16 @@ out_err:
  */
 static bool may_access_netns(int pid)
 {
-	int ret;
-	char s[200];
+	int ppid1, ppid2;
 
-	ret = snprintf(s, 200, "/proc/%d/ns/net", pid);
-	if (ret < 0 || ret >= 200)  // can't happen
+	ppid1 = get_task_ppid(getpid());
+	ppid2 = get_task_ppid(pid);
+	if (ppid1 != ppid2) {
+		fprintf(stderr, "pid %d has parent %d, %d has parent %d\n",
+			getpid(), ppid1, pid, ppid2);
 		return false;
-	ret = access(s, R_OK);
-	// if we can read the net/ns file, then it is our netns or one
-	// we created
-	return ret == 0;
+	}
+	return true;
 }
 
 int main(int argc, char *argv[])
