@@ -118,7 +118,7 @@ static int _recursive_rmdir_onedev(char *dirname, dev_t pdev)
 		failed=1;
 	}
 
-	return !failed;
+	return failed ? -1 : 0;
 }
 
 /* returns 1 on success, 0 if there were any failures */
