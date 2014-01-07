@@ -43,6 +43,7 @@ deluser $TUSER || true
 useradd $TUSER
 sudo mkdir -p $HDIR
 sudo chown $TUSER $HDIR
+echo "$TUSER veth lxcbr0 2" > /etc/lxc/lxc-usernet
 sed -i '/^lxcunpriv:/d' /etc/subuid /etc/subgid
 usermod -v 910000-919999 -w 910000-919999 $TUSER
 mkdir -p $HDIR/lxcbase
@@ -56,9 +57,10 @@ lxc.id_map = u 0 911000 10000
 lxc.id_map = g 0 911000 10000
 EOF
 
-su -l $TUSER -c "lxc-create -P $HDIR/lxcbase -t ubuntu-cloud -n c1 -f $HDIR/lxc-usernic.conf"
+echo "DOING: lxc-create -P $HDIR/lxcbase -t ubuntu-cloud -n c1 -f $HDIR/lxc-usernic.conf"
+sudo -u $TUSER lxc-create -P $HDIR/lxcbase -t ubuntu-cloud -n c1 -f $HDIR/lxc-usernic.conf
 read -p "c1 created, check it now" x
-su -l $TUSER -c "lxc-start -P $HDIR/lxcbase -n c1 -d"
+sudo -u $TUSER lxc-start -P $HDIR/lxcbase -n c1 -d
 
 p1=`lxc-info -P $HDIR/lxcbase -n c1 -p | awk -F: '{ print $2 }'`
 [ "$p1" != "-1" ] || { echo "Failed to start container c1"; false; }
