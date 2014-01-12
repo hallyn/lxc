@@ -21,6 +21,12 @@
 # License along with this library; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 
+if [ $(id -u) -ne 0 ]; then
+	echo 'run as root'
+	exit 1
+fi
+which newuidmap >/dev/null 2>&1 || { echo "'newuidmap' command is missing" >&2; false; }
+
 DONE=0
 cleanup() {
 	lxc-stop -P $HDIR/lxcbase -n c1
