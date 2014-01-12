@@ -49,16 +49,28 @@ usermod -v 910000-919999 -w 910000-919999 $TUSER
 mkdir -p $HDIR/lxcbase
 chown $TUSER $HDIR/lxcbase
 uid=$(id -u $TUSER)
+cat >> $HDIR/.bashrc << EOF
+export HOME=$HDIR
+export USER=$TUSER
+EOF
+chown $TUSER $HDIR/.bashrc
 
 cat > $HDIR/lxc-usernic.conf << EOF
 lxc.network.type = veth
 lxc.network.link = lxcbr0
-lxc.id_map = u 0 911000 10000
-lxc.id_map = g 0 911000 10000
+lxc.id_map = u 0 910000 9999
+lxc.id_map = g 0 910000 9999
 EOF
+chown $TUSER $HDIR/lxc-usernic.conf
+rm -rf /run/lock/lxc/home/$TUSER
+mkdir -p /run/lock/lxc/home/$TUSER
+chown $TUSER /run/lock/lxc/home/$TUSER
 
+cd $HDIR
+export HOME=$HDIR
+env | awk -F= '{print $1}' | while read line; do export ${line}=; done
 echo "DOING: lxc-create -P $HDIR/lxcbase -t ubuntu-cloud -n c1 -f $HDIR/lxc-usernic.conf"
-sudo -u $TUSER lxc-create -P $HDIR/lxcbase -t ubuntu-cloud -n c1 -f $HDIR/lxc-usernic.conf
+sudo -u $TUSER lxc-create -P $HDIR/lxcbase -t ubuntu-cloud -n c1 -f $HDIR/lxc-usernic.conf -l outout -o /tmp/o1
 read -p "c1 created, check it now" x
 sudo -u $TUSER lxc-start -P $HDIR/lxcbase -n c1 -d
 
