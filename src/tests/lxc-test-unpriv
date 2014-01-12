@@ -66,12 +66,17 @@ rm -rf /run/lock/lxc/home/$TUSER
 mkdir -p /run/lock/lxc/home/$TUSER
 chown $TUSER /run/lock/lxc/home/$TUSER
 
+for d in /sys/fs/cgroup/*; do
+	mkdir $d/lxctest
+	chown -R $TUSER $d/lxctest
+	echo $$ > $d/lxctest/tasks
+done
 cd $HDIR
 export HOME=$HDIR
 env | awk -F= '{print $1}' | while read line; do export ${line}=; done
 echo "DOING: lxc-create -P $HDIR/lxcbase -t ubuntu-cloud -n c1 -f $HDIR/lxc-usernic.conf"
 sudo -u $TUSER lxc-create -P $HDIR/lxcbase -t ubuntu-cloud -n c1 -f $HDIR/lxc-usernic.conf -l outout -o /tmp/o1
-read -p "c1 created, check it now" x
+#read -p "c1 created, check it now" x
 sudo -u $TUSER lxc-start -P $HDIR/lxcbase -n c1 -d
 
 p1=`lxc-info -P $HDIR/lxcbase -n c1 -p | awk -F: '{ print $2 }'`
