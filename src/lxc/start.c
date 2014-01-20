@@ -796,8 +796,8 @@ static int lxc_spawn(struct lxc_handler *handler)
 		ERROR("failed to setup the legacy cgroups for %s", name);
 		goto out_delete_net;
 	}
-	if (!cgroup_setup_without_devices(handler)) {
-		ERROR("failed to setup the cgroups for '%s'", name);
+	if (!cgroup_setup_limits(handler, false)) {
+		ERROR("failed to setup the cgroup limits for '%s'", name);
 		goto out_delete_net;
 	}
 
@@ -831,7 +831,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 	if (lxc_sync_barrier_child(handler, LXC_SYNC_POST_CONFIGURE))
 		goto out_delete_net;
 
-	if (!cgroup_setup_devices(handler)) {
+	if (!cgroup_setup_limits(handler, true)) {
 		ERROR("failed to setup the devices cgroup for '%s'", name);
 		goto out_delete_net;
 	}
@@ -852,11 +852,13 @@ static int lxc_spawn(struct lxc_handler *handler)
 	if (handler->ops->post_start(handler, handler->data))
 		goto out_abort;
 
+INFO("setting state to RUNNING");
 	if (lxc_set_state(name, handler, RUNNING)) {
 		ERROR("failed to set state to %s",
 			      lxc_state2str(RUNNING));
 		goto out_abort;
 	}
+INFO("done here");
 
 	lxc_sync_fini(handler);
 
@@ -914,6 +916,7 @@ int __lxc_start(const char *name, struct lxc_conf *conf,
 		goto out_abort;
 	}
 
+INFO("starting waitpid loop");
 	while (waitpid(handler->pid, &status, 0) < 0 && errno == EINTR)
 		continue;
 

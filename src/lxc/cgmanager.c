@@ -55,6 +55,7 @@ lxc_log_define(lxc_cgmanager, lxc);
 
 #include <nih-dbus/dbus_connection.h>
 #include <cgmanager-client/cgmanager-client.h>
+#include <nih/alloc.h>
 NihDBusProxy *cgroup_manager = NULL;
 
 extern struct cgroup_ops *active_cg_ops;
@@ -269,13 +270,25 @@ int cgm_get(const char *filename, char *value, size_t len, const char *name, con
 	strncpy(value, result, len);
 	if (strlen(result) >= len)
 		value[len-1] = '\0';
-	free(result);
+	nih_free(result);
 	return len;
+}
+
+static int cgm_do_set(const char *controller, const char *file,
+			 const char *cgroup, const char *value)
+{
+	int ret;
+	ret = cgmanager_set_value_sync(NULL, cgroup_manager, controller,
+				 cgroup, file, value);
+	if (ret != 0)
+		ERROR("Error setting cgroup %s limit %s", file, cgroup);
+	return ret;
 }
 
 int cgm_set(const char *filename, const char *value, const char *name, const char *lxcpath)
 {
 	char *controller, *key, *cgroup;
+	int ret;
 
 	controller = alloca(strlen(filename)+1);
 	strcpy(controller, filename);
@@ -291,14 +304,9 @@ int cgm_set(const char *filename, const char *value, const char *name, const cha
 			controller, lxcpath, name);
 		return -1;
 	}
-	if (cgmanager_set_value_sync(NULL, cgroup_manager, controller, cgroup, filename, value) != 0) {
-		ERROR("Error setting value for %s from cgmanager for cgroup %s (%s:%s)",
-			filename, cgroup, lxcpath, name);
-		free(cgroup);
-		return -1;
-	}
+	ret = cgm_do_set(controller, filename, cgroup, value);
 	free(cgroup);
-	return 0;
+	return ret;
 }
 
 /*
@@ -367,6 +375,136 @@ static int cgm_unfreeze_fromhandler(struct lxc_handler *handler)
 	return 0;
 }
 
+#if 0
+static char **collect_devices(struct lxc_handler *handler)
+{
+	char **list = NULL;
+	int i, nr = 1, len;
+	struct cgm_data *d = handler->cgroup_info->data;
+	char *result,
+		*sol, /* start of line */
+		*eol; /* end of line */
+
+	if (cgmanager_get_value_sync(NULL, cgroup_manager, "devices",
+			 d->cgroup_path, "devices.list", &result) != 0) {
+		ERROR("Error getting devices.list contents for %s:%s",
+			 handler->lxcpath, handler->name);
+		return NULL;
+	}
+	list = malloc(sizeof(char *));
+	if (!list) {
+		ERROR("Out of memory");
+		return NULL;
+	}
+	list[0] = NULL;
+	sol = result;
+	len = strlen(result);
+	while ((sol-result) < len) {
+		char **tmp;
+		for (eol = sol; eol-result < len && *eol && *eol != '\n'; eol++);
+		tmp = realloc(list, (nr+1)*sizeof(char *));
+		if (!tmp)
+			goto out_free;
+		list = tmp;
+		*eol = '\0';
+		list[nr-1] = strdup(sol);
+		if (!list[nr-1])
+			goto out_free;
+		list[nr] = NULL;
+		nr++;
+		sol = eol+1;
+	}
+out:
+	nih_free(result);
+	return list;
+out_free:
+	ERROR("Out of memory");
+	for (i = 0; i < nr-1; i++)
+		free(list[i]);
+	free(list);
+	list = NULL;
+	goto out;
+}
+
+static void free_devices(char **list)
+{
+	int i = 0;
+	while (list[i])
+		free(list[i++]);
+	free(list);
+}
+
+static bool devices_has_allow_or_deny(char **list, char *v, bool for_allow)
+{
+	int i;
+	bool ret = !for_allow;
+
+	// XXX FIXME if users could use something other than 'lxc.devices.deny = a'.
+	// not sure they ever do, but they *could*
+	// right now, I'm assuming they do NOT
+	if (!for_allow && strcmp(v, "a") != 0 && strcmp(v, "a *:* rwm") != 0)
+		return false;
+
+	for (i = 0; list[i]; i++) {
+		if (strcmp(list[i], "a *:* rwm") == 0) {
+			ret = for_allow;
+			goto out;
+		} else if (for_allow && strcmp(list[i], v) == 0) {
+			ret = true;
+			goto out;
+		}
+	}
+
+out:
+	return ret;
+}
+#endif
+
+static bool setup_limits(struct lxc_handler *h, bool do_devices)
+{
+	struct lxc_list *iterator;
+	struct lxc_cgroup *cg;
+	bool ret = false;
+	struct lxc_list *cgroup_settings = &h->conf->cgroup;
+	struct cgm_data *d = h->cgroup_info->data;
+
+	if (lxc_list_empty(cgroup_settings))
+		return 0;
+
+	lxc_list_for_each(iterator, cgroup_settings) {
+		char controller[100], *p;
+		cg = iterator->elem;
+		if (do_devices != !strncmp("devices", cg->subsystem, 7))
+			continue;
+		if (strlen(cg->subsystem) > 100) // i smell a rat
+			goto out;
+		strcpy(controller, cg->subsystem);
+		p = strchr(controller, '.');
+		if (p)
+			*p = '\0';
+		if (cgm_do_set(controller, cg->subsystem, d->cgroup_path
+				, cg->value) < 0) {
+			if (!do_devices) {
+				ERROR("Error setting %s to %s for %s\n",
+				      cg->subsystem, cg->value, h->name);
+				goto out;
+			}
+		}
+
+		DEBUG("cgroup '%s' set to '%s'", cg->subsystem, cg->value);
+	}
+
+	ret = true;
+	INFO("cgroup limits have been setup");
+out:
+	return ret;
+}
+
+static bool cgm_setup_limits(struct lxc_handler *handler, bool with_devices)
+{
+	return setup_limits(handler, with_devices);
+}
+
 static struct cgroup_ops cgmanager_ops = {
 	.destroy = cgm_destroy,
 	.init = cgm_init,
@@ -377,6 +515,7 @@ static struct cgroup_ops cgmanager_ops = {
 	.get = cgm_get,
 	.set = cgm_set,
 	.unfreeze_fromhandler = cgm_unfreeze_fromhandler,
+	.setup_limits = cgm_setup_limits,
 	.name = "cgmanager"
 };
 #endif
