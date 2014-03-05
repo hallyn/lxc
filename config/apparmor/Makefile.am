@@ -7,8 +7,12 @@ EXTRA_DIST = \
 	lxc-containers \
 	usr.bin.lxc-start
 
+apparmor: container-rules.base
+	./lxc-generate-aa-rules.py container-rules.base > container-rules
+
 if ENABLE_APPARMOR
-install-apparmor:
+install-apparmor: apparmor
+	cat abstractions/container-base.in container-rules >> abstractions/container-base
 	$(MKDIR_P) $(DESTDIR)$(sysconfdir)/apparmor.d/
 	$(MKDIR_P) $(DESTDIR)$(sysconfdir)/apparmor.d/abstractions/lxc/
 	$(MKDIR_P) $(DESTDIR)$(sysconfdir)/apparmor.d/lxc/

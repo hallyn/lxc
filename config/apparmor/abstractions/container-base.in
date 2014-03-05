@@ -30,8 +30,6 @@
   deny @{PROC}/sysrq-trigger rwklx,
   deny @{PROC}/mem rwklx,
   deny @{PROC}/kmem rwklx,
-  deny @{PROC}/sys/kernel/[^s][^h][^m]* wklx,
-  deny @{PROC}/sys/kernel/*/** wklx,
 
   # deny writes in /sys except for /sys/fs/cgroup, also allow
   # fusectl, securityfs and debugfs to be mounted there (read-only)
@@ -41,11 +39,6 @@
   deny mount fstype=debugfs -> /var/lib/ureadahead/debugfs/,
   mount fstype=proc -> /proc/,
   mount fstype=sysfs -> /sys/,
-  deny /sys/[^f]*/** wklx,
-  deny /sys/f[^s]*/** wklx,
-  deny /sys/fs/[^c]*/** wklx,
-  deny /sys/fs/c[^g]*/** wklx,
-  deny /sys/fs/cg[^r]*/** wklx,
   deny /sys/firmware/efi/efivars/** rwklx,
   deny /sys/kernel/security/** rwklx,
   mount options=(move) /sys/fs/cgroup/cgmanager/ -> /sys/fs/cgroup/cgmanager.lower/,

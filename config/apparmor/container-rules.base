@@ -1,0 +1,6 @@
+block /sys
+allow /sys/fs/cgroup/**
+allow /sys/devices/virtual/net/**
+allow /sys/class/net/**
+block /proc/sys/kernel
+allow /proc/sys/kernel/shm*
