@@ -5,7 +5,8 @@ EXTRA_DIST = \
 	profiles/lxc-default-with-mounting \
 	profiles/lxc-default-with-nesting \
 	lxc-containers \
-	usr.bin.lxc-start
+	usr.bin.lxc-start \
+	lxc-generate-aa-rules.py
 
 apparmor: container-rules.base
 	./lxc-generate-aa-rules.py container-rules.base > container-rules

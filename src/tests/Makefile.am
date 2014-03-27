@@ -70,7 +70,6 @@ EXTRA_DIST = \
 	list.c \
 	locktests.c \
 	lxcpath.c \
-	lxc-test-apparmor \
 	lxc-test-autostart \
 	lxc-test-ubuntu \
 	lxc-test-unpriv \
