@@ -135,5 +135,3 @@ patches
 *.orig
 *.rej
 tags
-config/apparmor/container-base
-config/apparmor/abstractions/container-base
