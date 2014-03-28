@@ -66,7 +66,7 @@ static char *base_path;
  * TODO read this from configuration file too
  * TODO do we want to create these in a tmpfs?
  */
-static bool setup_base_path(void)
+bool setup_base_run_path(void)
 {
 	base_path = strdup("/run/cgmanager/fs");
 	if (!base_path) {
@@ -223,10 +223,6 @@ int setup_cgroup_mounts(char *extra_mounts)
 		nih_fatal("Failed to unshare a private mount ns: %s", strerror(errno));
 		return -1;
 	}
-	if (!setup_base_path()) {
-		nih_fatal("Error setting up base cgroup path");
-		return -1;
-	}
 
 	if (extra_mounts) {
 		char *e;
@@ -272,6 +268,10 @@ int setup_cgroup_mounts(char *extra_mounts)
 out:
 	fclose(cgf);
 	return ret;
+}
+
+bool create_agent_symlinks(char *path, char *extra_mounts)
+{
 }
 
 static inline void drop_newlines(char *s)

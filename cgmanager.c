@@ -756,6 +756,45 @@ static bool setup_cgroup_dir(void)
 	return mkdir_cgmanager_dir();
 }
 
+/*
+ * In the old release agent support, the release agent is not told the
+ * controller in which the cgroup was freed.  Therefore we need to have a
+ * different binary for each mounted controller.  We will create these under
+ * /run/cgmanager/agents/ as symlinks to /sbin/cgm-release-agent, i.e.
+ * /run/cgmanager/agents/cgm-release-agent.freezer.
+ * However /run is noexec by default.  Therefore we mount a small tmpfs
+ * onto /run/cgmanager/agents.
+ */
+static bool setup_release_agents(char *extra_mounts)
+{
+	char path[MAXPATHLEN];
+	int ret;
+
+	ret = snprintf(path, MAXPATHLEN, "/run/cgmanager/agents");
+	if (ret < 0 || ret >= MAXPATHLEN) {
+		nih_error("memory error");
+		return false;
+	}
+	if (!dir_exists(path) && mkdir_p(path, 0755) < 0) {
+		nih_error("Error creating %s", path);
+		return false;
+	}
+
+	/* XXX TODO - we should detect if we've already mounted this.
+	 * statvfs comparing /run to path? */
+	if (mount("", path, "tmpfs", 0, "size=100000,mode=755") < 0) {
+		nih_error("Error mounting tmpfs for release agents");
+		return false;
+	}
+
+	if (!create_agent_symlinks(path, extra_mounts)) {
+		nih_error("Error creating release agent symlinks");
+		return false;
+	}
+
+	return true;
+}
+
 int
 main (int argc, char *argv[])
 {
@@ -782,6 +821,17 @@ main (int argc, char *argv[])
 	server = nih_dbus_server (CGMANAGER_DBUS_PATH, client_connect,
 				  client_disconnect);
 	nih_assert (server != NULL);
+
+	if (!setup_base_run_path()) {
+		nih_fatal("Error setting up base cgroup path");
+		return -1;
+	}
+
+	/* Setup the release notifiers - this is done in the host ns */
+	if (setup_release_agents() < 0) {
+		nih_fatal ("Failed to set up cgroup release agents");
+		exit(1);
+	}
 
 	if (setup_cgroup_mounts(extra_cgroup_mounts) < 0) {
 		nih_fatal ("Failed to set up cgroup mounts");
