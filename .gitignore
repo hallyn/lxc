@@ -136,4 +136,4 @@ patches
 *.rej
 tags
 config/apparmor/container-base
-config/apparmor/container-rules
+config/apparmor/abstractions/container-base

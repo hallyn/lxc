@@ -1,3 +1,7 @@
+# Run lxc-generate-aa-rules.py on this file after any modification, to generate
+# the container-rules file which is appended to container-base.in to create the
+# final abstractions/container-base.
+
 block /sys
 allow /sys/fs/cgroup/**
 allow /sys/devices/virtual/net/**
