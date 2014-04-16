@@ -39,7 +39,7 @@ static void try_to_remove(void)
 			c->destroy(c);
 		lxc_container_put(c);
 	}
-	snprintf(snappath, 1024, "%ssnaps/%s", lxc_get_global_config_item("lxc.lxcpath"), MYNAME);
+	snprintf(snappath, 1024, "%s/%s/snaps", lxc_get_global_config_item("lxc.lxcpath"), MYNAME);
 	c = lxc_container_new("snap0", snappath);
 	if (c) {
 		if (c->is_defined(c))
@@ -95,11 +95,11 @@ int main(int argc, char *argv[])
 		goto err;
 	}
 
-	// rootfs should be ${lxcpath}snaps/${lxcname}/snap0/rootfs
+	// rootfs should be ${lxcpath}${lxcname}/snaps/snap0/rootfs
 	struct stat sb;
 	int ret;
 	char path[1024];
-	snprintf(path, 1024, "%ssnaps/%s/snap0/rootfs", lxc_get_global_config_item("lxc.lxcpath"), MYNAME);
+	snprintf(path, 1024, "%s/%s/snaps/snap0/rootfs", lxc_get_global_config_item("lxc.lxcpath"), MYNAME);
 	ret = stat(path, &sb);
 	if (ret != 0) {
 		fprintf(stderr, "%s: %d: snapshot was not actually created\n", __FILE__, __LINE__);

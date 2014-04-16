@@ -46,7 +46,8 @@
 
 lxc_log_define(lxc_utils, lxc);
 
-static int _recursive_rmdir_onedev(char *dirname, dev_t pdev)
+static int _recursive_rmdir_onedev(char *dirname, dev_t pdev,
+				   const char *exclude, int level)
 {
 	struct dirent dirent, *direntp;
 	DIR *dir;
@@ -70,6 +71,9 @@ static int _recursive_rmdir_onedev(char *dirname, dev_t pdev)
 		    !strcmp(direntp->d_name, ".."))
 			continue;
 
+		if (!level && exclude && !strcmp(direntp->d_name, exclude))
+			continue;
+
 		rc = snprintf(pathname, MAXPATHLEN, "%s/%s", dirname, direntp->d_name);
 		if (rc < 0 || rc >= MAXPATHLEN) {
 			ERROR("pathname too long");
@@ -85,7 +89,7 @@ static int _recursive_rmdir_onedev(char *dirname, dev_t pdev)
 		if (mystat.st_dev != pdev)
 			continue;
 		if (S_ISDIR(mystat.st_mode)) {
-			if (_recursive_rmdir_onedev(pathname, pdev) < 0)
+			if (_recursive_rmdir_onedev(pathname, pdev, exclude, level+1) < 0)
 				failed=1;
 		} else {
 			if (unlink(pathname) < 0) {
@@ -95,9 +99,11 @@ static int _recursive_rmdir_onedev(char *dirname, dev_t pdev)
 		}
 	}
 
-	if (rmdir(dirname) < 0) {
-		ERROR("%s: failed to delete %s", __func__, dirname);
-		failed=1;
+	if (!exclude || level != 0) {
+		if (rmdir(dirname) < 0) {
+			ERROR("%s: failed to delete %s", __func__, dirname);
+			failed=1;
+		}
 	}
 
 	ret = closedir(dir);
@@ -110,7 +116,7 @@ static int _recursive_rmdir_onedev(char *dirname, dev_t pdev)
 }
 
 /* returns 0 on success, -1 if there were any failures */
-extern int lxc_rmdir_onedev(char *path)
+extern int lxc_rmdir_onedev(char *path, const char *exclude)
 {
 	struct stat mystat;
 
@@ -119,7 +125,7 @@ extern int lxc_rmdir_onedev(char *path)
 		return -1;
 	}
 
-	return _recursive_rmdir_onedev(path, mystat.st_dev);
+	return _recursive_rmdir_onedev(path, mystat.st_dev, exclude, 0);
 }
 
 static int mount_fs(const char *source, const char *target, const char *type)

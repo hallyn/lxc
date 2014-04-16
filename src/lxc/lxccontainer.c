@@ -1977,7 +1977,7 @@ out:
 static int lxc_rmdir_onedev_wrapper(void *data)
 {
 	char *arg = (char *) data;
-	return lxc_rmdir_onedev(arg);
+	return lxc_rmdir_onedev(arg, "snaps");
 }
 
 static int do_bdev_destroy(struct lxc_conf *conf)
@@ -2054,7 +2054,7 @@ static bool lxcapi_destroy(struct lxc_container *c)
 	if (am_unpriv())
 		ret = userns_exec_1(c->lxc_conf, lxc_rmdir_onedev_wrapper, path);
 	else
-		ret = lxc_rmdir_onedev(path);
+		ret = lxc_rmdir_onedev(path, "snaps");
 	if (ret < 0) {
 		ERROR("Error destroying container directory for %s", c->name);
 		goto out;
@@ -2846,16 +2846,42 @@ static int get_next_index(const char *lxcpath, char *cname)
 	}
 }
 
+static bool get_snappath_dir(struct lxc_container *c, char *snappath)
+{
+	int ret;
+	/*
+	 * If the old style snapshot path exists, use it
+	 * /var/lib/lxc -> /var/lib/lxcsnaps
+	 */
+	ret = snprintf(snappath, MAXPATHLEN, "%ssnaps", c->config_path);
+	if (ret < 0 || ret >= MAXPATHLEN)
+		return false;
+	if (dir_exists(snappath)) {
+		ret = snprintf(snappath, MAXPATHLEN, "%ssnaps/%s", c->config_path, c->name);
+		if (ret < 0 || ret >= MAXPATHLEN)
+			return false;
+		return true;
+	}
+
+	/*
+	 * Use the new style path
+	 * /var/lib/lxc -> /var/lib/lxc + c->name + /snaps + \0
+	 */
+	ret = snprintf(snappath, MAXPATHLEN, "%s/%s/snaps", c->config_path, c->name);
+	if (ret < 0 || ret >= MAXPATHLEN)
+		return false;
+	return true;
+}
+
 static int lxcapi_snapshot(struct lxc_container *c, const char *commentfile)
 {
 	int i, flags, ret;
 	struct lxc_container *c2;
 	char snappath[MAXPATHLEN], newname[20];
 
-	// /var/lib/lxc -> /var/lib/lxcsnaps \0
-	ret = snprintf(snappath, MAXPATHLEN, "%ssnaps/%s", c->config_path, c->name);
-	if (ret < 0 || ret >= MAXPATHLEN)
+	if (!get_snappath_dir(c, snappath)) {
 		return -1;
+	}
 	i = get_next_index(snappath, c->name);
 
 	if (mkdir_p(snappath, 0755) < 0) {
@@ -2989,7 +3015,7 @@ static char *get_timestamp(char* snappath, char *name)
 static int lxcapi_snapshot_list(struct lxc_container *c, struct lxc_snapshot **ret_snaps)
 {
 	char snappath[MAXPATHLEN], path2[MAXPATHLEN];
-	int dirlen, count = 0, ret;
+	int count = 0, ret;
 	struct dirent dirent, *direntp;
 	struct lxc_snapshot *snaps =NULL, *nsnaps;
 	DIR *dir;
@@ -2997,9 +3023,7 @@ static int lxcapi_snapshot_list(struct lxc_container *c, struct lxc_snapshot **r
 	if (!c || !lxcapi_is_defined(c))
 		return -1;
 
-	// snappath is ${lxcpath}snaps/${lxcname}/
-	dirlen = snprintf(snappath, MAXPATHLEN, "%ssnaps/%s", c->config_path, c->name);
-	if (dirlen < 0 || dirlen >= MAXPATHLEN) {
+	if (!get_snappath_dir(c, snappath)) {
 		ERROR("path name too long");
 		return -1;
 	}
@@ -3067,7 +3091,7 @@ out_free:
 static bool lxcapi_snapshot_restore(struct lxc_container *c, const char *snapname, const char *newname)
 {
 	char clonelxcpath[MAXPATHLEN];
-	int flags = 0,ret;
+	int flags = 0;
 	struct lxc_container *snap, *rest;
 	struct bdev *bdev;
 	bool b = false;
@@ -3090,8 +3114,7 @@ static bool lxcapi_snapshot_restore(struct lxc_container *c, const char *snapnam
 			return false;
 		}
 	}
-	ret = snprintf(clonelxcpath, MAXPATHLEN, "%ssnaps/%s", c->config_path, c->name);
-	if (ret < 0 || ret >= MAXPATHLEN) {
+	if (!get_snappath_dir(c, clonelxcpath)) {
 		bdev_put(bdev);
 		return false;
 	}
@@ -3127,7 +3150,7 @@ static bool lxcapi_snapshot_destroy(struct lxc_container *c, const char *snapnam
 	if (!c || !c->name || !c->config_path)
 		return false;
 
-	ret = snprintf(clonelxcpath, MAXPATHLEN, "%ssnaps/%s", c->config_path, c->name);
+	ret = snprintf(clonelxcpath, MAXPATHLEN, "%s/%s/snaps", c->config_path, c->name);
 	if (ret < 0 || ret >= MAXPATHLEN)
 		goto err;
 
@@ -3306,6 +3329,9 @@ static int lxcapi_attach_run_waitl(struct lxc_container *c, lxc_attach_options_t
 struct lxc_container *lxc_container_new(const char *name, const char *configpath)
 {
 	struct lxc_container *c;
+
+	if (!name)
+		return NULL;
 
 	c = malloc(sizeof(*c));
 	if (!c) {
