@@ -3207,7 +3207,7 @@ static bool lxcapi_snapshot_destroy(struct lxc_container *c, const char *snapnam
 	if (strcmp(snapname, "ALL") == 0)
 		return remove_all_snapshots(clonelxcpath);
 	else
-		return do_snapshot_destroy(clonelxcpath, snapname);
+		return do_snapshot_destroy(snapname, clonelxcpath);
 }
 
 static bool lxcapi_may_control(struct lxc_container *c)
