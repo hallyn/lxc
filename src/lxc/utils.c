@@ -88,7 +88,7 @@ static int _recursive_rmdir_onedev(char *dirname, dev_t pdev,
 				case ENOTDIR:
 					ret = unlink(pathname);
 					if (ret)
-						INFO("%s: failed to remove %s", __func__ pathname);
+						INFO("%s: failed to remove %s", __func__, pathname);
 				default:
 					ERROR("%s: failed to rmdir %s", __func__, pathname);
 					failed = 1;

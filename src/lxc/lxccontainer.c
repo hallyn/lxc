@@ -3141,18 +3141,10 @@ static bool lxcapi_snapshot_restore(struct lxc_container *c, const char *snapnam
 	return b;
 }
 
-static bool lxcapi_snapshot_destroy(struct lxc_container *c, const char *snapname)
+static bool do_snapshot_destroy(const char *snapname, const char *clonelxcpath)
 {
-	int ret;
-	char clonelxcpath[MAXPATHLEN];
 	struct lxc_container *snap = NULL;
-
-	if (!c || !c->name || !c->config_path)
-		return false;
-
-	ret = snprintf(clonelxcpath, MAXPATHLEN, "%s/%s/snaps", c->config_path, c->name);
-	if (ret < 0 || ret >= MAXPATHLEN)
-		goto err;
+	bool bret = false;
 
 	snap = lxc_container_new(snapname, clonelxcpath);
 	if (!snap || !lxcapi_is_defined(snap)) {
@@ -3164,13 +3156,58 @@ static bool lxcapi_snapshot_destroy(struct lxc_container *c, const char *snapnam
 		ERROR("Could not destroy snapshot %s", snapname);
 		goto err;
 	}
-	lxc_container_put(snap);
+	bret = true;
 
-	return true;
 err:
 	if (snap)
 		lxc_container_put(snap);
-	return false;
+	return bret;
+}
+
+static bool remove_all_snapshots(const char *path)
+{
+	DIR *dir;
+	struct dirent dirent, *direntp;
+	bool bret = true;
+
+	dir = opendir(path);
+	if (!dir) {
+		SYSERROR("opendir on lxcpath");
+		return false;
+	}
+	while (!readdir_r(dir, &dirent, &direntp)) {
+		if (!direntp)
+			break;
+		if (!strcmp(direntp->d_name, "."))
+			continue;
+		if (!strcmp(direntp->d_name, ".."))
+			continue;
+		if (!do_snapshot_destroy(direntp->d_name, path)) {
+			bret = false;
+			continue;
+		}
+	}
+
+	closedir(dir);
+	return bret;
+}
+
+static bool lxcapi_snapshot_destroy(struct lxc_container *c, const char *snapname)
+{
+	int ret;
+	char clonelxcpath[MAXPATHLEN];
+
+	if (!c || !c->name || !c->config_path || !snapname)
+		return false;
+
+	ret = snprintf(clonelxcpath, MAXPATHLEN, "%s/%s/snaps", c->config_path, c->name);
+	if (ret < 0 || ret >= MAXPATHLEN)
+		return false;
+
+	if (strcmp(snapname, "ALL") == 0)
+		return remove_all_snapshots(clonelxcpath);
+	else
+		return do_snapshot_destroy(clonelxcpath, snapname);
 }
 
 static bool lxcapi_may_control(struct lxc_container *c)
