@@ -32,22 +32,16 @@
 static void try_to_remove(void)
 {
 	struct lxc_container *c;
-	char snappath[1024];
 	c = lxc_container_new(RESTNAME, NULL);
 	if (c) {
-		if (c->is_defined(c))
-			c->destroy(c);
-		lxc_container_put(c);
-	}
-	snprintf(snappath, 1024, "%s/%s/snaps", lxc_get_global_config_item("lxc.lxcpath"), MYNAME);
-	c = lxc_container_new("snap0", snappath);
-	if (c) {
+		c->snapshot_destroy(c, "ALL");
 		if (c->is_defined(c))
 			c->destroy(c);
 		lxc_container_put(c);
 	}
 	c = lxc_container_new(MYNAME2, NULL);
 	if (c) {
+		c->snapshot_destroy(c, "ALL");
 		if (c->is_defined(c))
 			c->destroy(c);
 		lxc_container_put(c);
