@@ -71,15 +71,32 @@ static int _recursive_rmdir_onedev(char *dirname, dev_t pdev,
 		    !strcmp(direntp->d_name, ".."))
 			continue;
 
-		if (!level && exclude && !strcmp(direntp->d_name, exclude))
-			continue;
-
 		rc = snprintf(pathname, MAXPATHLEN, "%s/%s", dirname, direntp->d_name);
 		if (rc < 0 || rc >= MAXPATHLEN) {
 			ERROR("pathname too long");
 			failed=1;
 			continue;
 		}
+
+		if (!level && exclude && !strcmp(direntp->d_name, exclude)) {
+			ret = rmdir(pathname);
+			if (ret < 0) {
+				switch(errno) {
+				case ENOTEMPTY:
+					INFO("Not deleting snapshots");
+					break;
+				case ENOTDIR:
+					ret = unlink(pathname);
+					if (ret)
+						INFO("%s: failed to remove %s", __func__ pathname);
+				default:
+					ERROR("%s: failed to rmdir %s", __func__, pathname);
+					failed = 1;
+				}
+			}
+			continue;
+		}
+
 		ret = lstat(pathname, &mystat);
 		if (ret) {
 			ERROR("%s: failed to stat %s", __func__, pathname);
