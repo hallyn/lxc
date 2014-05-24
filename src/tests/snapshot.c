@@ -48,6 +48,7 @@ static void try_to_remove(void)
 	}
 	c = lxc_container_new(MYNAME, NULL);
 	if (c) {
+		c->snapshot_destroy(c, "ALL");
 		if (c->is_defined(c))
 			c->destroy(c);
 		lxc_container_put(c);
