@@ -164,17 +164,7 @@ int main(int argc, char *argv[])
 		goto err;
 	}
 
-	if (!c2->destroy(c2)) {
-		fprintf(stderr, "%s: %d: failed to destroy container\n", __FILE__, __LINE__);
-		goto err;
-	}
-
 good:
-	if (!c->destroy(c)) {
-		fprintf(stderr, "%s: %d: failed to destroy container\n", __FILE__, __LINE__);
-		goto err;
-	}
-
 	lxc_container_put(c);
 	try_to_remove();
 

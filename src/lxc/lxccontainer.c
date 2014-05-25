@@ -3189,6 +3189,10 @@ static bool remove_all_snapshots(const char *path)
 	}
 
 	closedir(dir);
+
+	if (rmdir(path))
+		SYSERROR("Error removing directory %s", path);
+
 	return bret;
 }
 
