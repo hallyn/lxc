@@ -166,6 +166,11 @@ endif
 
 bin_SCRIPTS = lxc-checkconfig
 
+if ENABLE_CRIU
+liblxc_so_LDADD += $(CRIU_LIBS)
+liblxc_so_CFLAGS += $(CRIU_CFLAGS)
+endif
+
 EXTRA_DIST = \
 	lxc-device \
 	lxc-ls \
@@ -203,12 +208,16 @@ bin_PROGRAMS = \
 	lxc-unfreeze \
 	lxc-unshare \
 	lxc-usernsexec \
-	lxc-wait
+	lxc-wait \
+	lxc-checkpoint \
+	lxc-restore
 
 sbin_PROGRAMS = init.lxc
 pkglibexec_PROGRAMS = \
 	lxc-monitord \
 	lxc-user-nic
+pkglibexec_SCRIPTS = \
+	lxc-restore-net
 
 AM_LDFLAGS = -Wl,-E
 if ENABLE_RPATH
@@ -238,6 +247,8 @@ lxc_create_SOURCES = lxc_create.c
 lxc_snapshot_SOURCES = lxc_snapshot.c
 lxc_usernsexec_SOURCES = lxc_usernsexec.c
 lxc_user_nic_SOURCES = lxc_user_nic.c network.c network.h
+lxc_checkpoint_SOURCES = lxc_checkpoint.c
+lxc_restore_SOURCES = lxc_restore.c
 
 if HAVE_STATIC_LIBCAP
 sbin_PROGRAMS += init.lxc.static

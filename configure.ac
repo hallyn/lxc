@@ -261,6 +261,27 @@ AM_COND_IF([ENABLE_SECCOMP],
 		])
 	])
 
+# criu
+AC_ARG_ENABLE([criu],
+	[AC_HELP_STRING([--enable-criu], [enable checkpoint/restore support [default=auto]])],
+	[], [enable_criu=auto])
+
+if test "x$enable_criu" = "xauto" ; then
+	AC_CHECK_PROG([CRIU_CHECK], [criu], [yes], [no], "$PATH:/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin")
+	if test "x$CRIU_CHECK" = "xyes" ; then
+		enable_criu=yes
+	fi
+fi
+
+AM_CONDITIONAL([ENABLE_CRIU], [test "x$enable_criu" = "xyes"])
+AC_PATH_TOOL([CRIU_PATH], [criu], [no])
+if test "x$enable_criu" = "xyes" ; then
+	if test "x$CRIU_PATH" = "xno" ; then
+		AC_MSG_ERROR([Could not find criu])
+	fi
+	AC_DEFINE_UNQUOTED([CRIU_PATH], "$CRIU_PATH", [Criu path])
+fi
+
 # cgmanager
 AC_ARG_ENABLE([cgmanager],
 	[AC_HELP_STRING([--enable-cgmanager], [enable cgmanager support [default=auto]])],
@@ -652,6 +673,7 @@ AC_CONFIG_FILES([
 	doc/lxc-autostart.sgml
 	doc/lxc-cgroup.sgml
 	doc/lxc-checkconfig.sgml
+	doc/lxc-checkpoint.sgml
 	doc/lxc-clone.sgml
 	doc/lxc-config.sgml
 	doc/lxc-console.sgml
@@ -663,6 +685,7 @@ AC_CONFIG_FILES([
 	doc/lxc-info.sgml
 	doc/lxc-ls.sgml
 	doc/lxc-monitor.sgml
+	doc/lxc-restore.sgml
 	doc/lxc-snapshot.sgml
 	doc/lxc-start-ephemeral.sgml
 	doc/lxc-start.sgml
@@ -780,6 +803,7 @@ Environment:
  - GnuTLS: $enable_gnutls
  - Bash integration: $enable_bash
  - Openvswitch: $enable_ovs
+ - CRIU: $CRIU_PATH
 
 Security features:
  - Apparmor: $enable_apparmor
