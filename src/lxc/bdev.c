@@ -53,6 +53,7 @@
 #include "namespace.h"
 #include "parse.h"
 #include "lxclock.h"
+#include "lxc-btrfs.h"
 
 #ifndef BLKGETSIZE64
 #define BLKGETSIZE64 _IOR(0x12,114,size_t)
@@ -1185,22 +1186,130 @@ static const struct bdev_ops lvm_ops = {
 // btrfs ops
 //
 
-struct btrfs_ioctl_space_info {
-	unsigned long long flags;
-	unsigned long long total_bytes;
-	unsigned long long used_bytes;
-};
+/*
+ * code borrowed and mangled from
+ * http://www.syslinux.org/archives/2011-July/017043.html
+ */
+static char ** btrfs_rm_subvols(const char *path)
+{
+	struct btrfs_ioctl_search_args args;
+	struct btrfs_ioctl_search_key *sk = &args.key;
+	struct btrfs_ioctl_search_header *sh;
+	int ret, i;
+	int fd;
+	struct btrfs_root_ref *ref;
+	struct btrfs_dir_item *dir_item;
+	unsigned long off = 0;
+	int name_len;
+	char *name;
+	u64 dir_id;
 
-struct btrfs_ioctl_space_args {
-	unsigned long long space_slots;
-	unsigned long long total_spaces;
-	struct btrfs_ioctl_space_info spaces[0];
-};
+	memset(&args, 0, sizeof(args));
 
-#define BTRFS_IOCTL_MAGIC 0x94
-#define BTRFS_IOC_SUBVOL_GETFLAGS _IOR(BTRFS_IOCTL_MAGIC, 25, unsigned long long)
-#define BTRFS_IOC_SPACE_INFO _IOWR(BTRFS_IOCTL_MAGIC, 20, \
-                                    struct btrfs_ioctl_space_args)
+	/* search in the tree of tree roots */
+	sk->tree_id = 1;
+
+	/*
+	 * set the min and max to backref keys.  The search will
+	 * only send back this type of key now.
+	 */
+	sk->max_type = BTRFS_ROOT_BACKREF_KEY;
+	sk->min_type = BTRFS_DIR_ITEM_KEY;
+
+	/*
+	 * set all the other params to the max, we'll take any objectid
+	 * and any trans
+	 */
+	sk->min_objectid = BTRFS_ROOT_TREE_DIR_OBJECTID;
+	sk->max_objectid = BTRFS_ROOT_TREE_DIR_OBJECTID;
+
+	sk->max_offset = (u64)-1;
+	sk->min_offset = 0;
+	sk->max_transid = (u64)-1;
+
+	/* just a big number, doesn't matter much */
+	sk->nr_items = 4096;
+
+	fd = open(path, O_RDONLY);
+	if (fd < 0)
+		return NULL;
+	while(1) {
+		ret = ioctl(fd, BTRFS_IOC_TREE_SEARCH, &args);
+		if (ret < 0) {
+			close(fd);
+			ERROR("ERROR: can't perform the search\n");
+			return NULL;
+		}
+		/* the ioctl returns the number of item it found in nr_items */
+		if (sk->nr_items == 0) {
+			break;
+		}
+
+		off = 0;
+
+		/*
+		 * for each item, pull the key out of the header and then
+		 * read the root_ref item it contains
+		 */
+		for (i = 0; i < sk->nr_items; i++) {
+			sh = (struct btrfs_ioctl_search_header *)(args.buf + off);
+			off += sizeof(*sh);
+			if (sh->type == BTRFS_DIR_ITEM_KEY) {
+				dir_item = (struct btrfs_dir_item *)(args.buf + off);
+				name_len = dir_item->name_len;
+				name = (char *)(dir_item + 1);
+				INFO("btrfs: found %s\n", name);
+
+#if 0
+				strncpy(dirname, name, name_len);
+				dirname[name_len] = '\0';
+				if (strcmp(dirname, "default") == 0) {
+					defaultsubvolid = dir_item->location.objectid;
+					break;
+				}
+#endif
+			}
+			else if (sh->type == BTRFS_ROOT_BACKREF_KEY) {
+				ref = (struct btrfs_root_ref *)(args.buf + off);
+				name_len = ref->name_len;
+				name = (char *)(ref + 1);
+				dir_id = ref->dirid;
+
+				INFO("backref key, objectid is %d name %s len %d dir_id %d\n",
+					(int)sh->objectid, name, (int)name_len,
+					(int)dir_id);
+
+			}
+			else
+				INFO("got sh->type %d\n", (int) sh->type);
+			off += sh->len;
+
+			/*
+			 * record the mins in sk so we can make sure the
+			 * next search doesn't repeat this root
+			 */
+			sk->min_objectid = sh->objectid;
+			sk->min_type = sh->type;
+			sk->max_type = sh->type;
+			sk->min_offset = sh->offset;
+		}
+		sk->nr_items = 4096;
+		/* this iteration is done, step forward one root for the next
+		 * ioctl
+		 */
+		if (sk->min_objectid < (u64)-1) {
+			sk->min_objectid = BTRFS_ROOT_TREE_DIR_OBJECTID;
+			sk->max_objectid = BTRFS_ROOT_TREE_DIR_OBJECTID;
+			sk->max_type = BTRFS_ROOT_BACKREF_KEY;
+			sk->min_type = BTRFS_ROOT_BACKREF_KEY;
+			sk->min_offset = 0;
+		} else
+			break;
+	}
+	close(fd);
+
+	return NULL;
+}
 
 static bool is_btrfs_fs(const char *path)
 {
@@ -1228,6 +1337,9 @@ static int btrfs_detect(const char *path)
 
 	if (!is_btrfs_fs(path))
 		return 0;
+
+	// XXX DROPME - detecting btrfs subvolumes
+	(void)btrfs_rm_subvols(path);
 
 	// and make sure it's a subvolume.
 	ret = stat(path, &st);
@@ -1270,41 +1382,6 @@ static int btrfs_umount(struct bdev *bdev)
 	return umount(bdev->dest);
 }
 
-#define BTRFS_SUBVOL_NAME_MAX 4039
-#define BTRFS_PATH_NAME_MAX 4087
-
-struct btrfs_ioctl_vol_args {
-	signed long long fd;
-	char name[BTRFS_PATH_NAME_MAX + 1];
-};
-
-#define BTRFS_IOCTL_MAGIC 0x94
-#define BTRFS_IOC_SUBVOL_CREATE_V2 _IOW(BTRFS_IOCTL_MAGIC, 24, \
-                                   struct btrfs_ioctl_vol_args_v2)
-#define BTRFS_IOC_SNAP_CREATE_V2 _IOW(BTRFS_IOCTL_MAGIC, 23, \
-                                   struct btrfs_ioctl_vol_args_v2)
-#define BTRFS_IOC_SUBVOL_CREATE _IOW(BTRFS_IOCTL_MAGIC, 14, \
-                                   struct btrfs_ioctl_vol_args)
-#define BTRFS_IOC_SNAP_DESTROY _IOW(BTRFS_IOCTL_MAGIC, 15, \
-                                   struct btrfs_ioctl_vol_args)
-
-#define BTRFS_QGROUP_INHERIT_SET_LIMITS (1ULL << 0)
-
-struct btrfs_ioctl_vol_args_v2 {
-	signed long long fd;
-	unsigned long long transid;
-	unsigned long long flags;
-	union {
-		struct {
-			unsigned long long size;
-			//struct btrfs_qgroup_inherit *qgroup_inherit;
-			void *qgroup_inherit;
-		};
-		unsigned long long unused[4];
-	};
-	char name[BTRFS_SUBVOL_NAME_MAX + 1];
-};
-
 static int btrfs_subvolume_create(const char *path)
 {
 	int ret, fd = -1;
@@ -1341,17 +1418,6 @@ static int btrfs_subvolume_create(const char *path)
 	close(fd);
 	return ret;
 }
-
-#define BTRFS_FSID_SIZE 16
-struct btrfs_ioctl_fs_info_args {
-	unsigned long long max_id;
-	unsigned long long num_devices;
-	char fsid[BTRFS_FSID_SIZE];
-	unsigned long long reserved[124];
-};
-
-#define BTRFS_IOC_FS_INFO _IOR(BTRFS_IOCTL_MAGIC, 31, \
-		struct btrfs_ioctl_fs_info_args)
 
 static int btrfs_same_fs(const char *orig, const char *new) {
 	int fd_orig = -1, fd_new = -1, ret = -1;
