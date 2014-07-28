@@ -67,7 +67,25 @@ struct btrfs_ioctl_vol_args_v2 {
 	char name[BTRFS_SUBVOL_NAME_MAX + 1];
 };
 
+/*
+ * root backrefs tie subvols and snapshots to the directory entries that
+ * reference them
+ */
 #define BTRFS_ROOT_BACKREF_KEY  144
+
+/*
+ * root items point to tree roots.  There are typically in the root
+ * tree used by the super block to find all the other trees
+ */
+#define BTRFS_ROOT_ITEM_KEY     132
+
+/*
+ * root refs make a fast index for listing all of the snapshots and
+ * subvolumes referenced by a given root.  They point directly to the
+ * directory item in the root that references the subvol
+ */
+#define BTRFS_ROOT_REF_KEY      156
+
 #define BTRFS_ROOT_TREE_DIR_OBJECTID 6ULL
 #define BTRFS_DIR_ITEM_KEY      84
 
@@ -155,4 +173,115 @@ struct btrfs_ioctl_search_args {
 
 #define BTRFS_IOC_TREE_SEARCH _IOWR(BTRFS_IOCTL_MAGIC, 17, \
                                    struct btrfs_ioctl_search_args)
+#define BTRFS_UUID_SIZE 16
 
+struct btrfs_timespec {
+	__le64 sec;
+	__le32 nsec;
+} __attribute__ ((__packed__));
+
+struct btrfs_inode_item {
+	/* nfs style generation number */
+	__le64 generation;
+	/* transid that last touched this inode */
+	__le64 transid;
+	__le64 size;
+	__le64 nbytes;
+	__le64 block_group;
+	__le32 nlink;
+	__le32 uid;
+	__le32 gid;
+	__le32 mode;
+	__le64 rdev;
+	__le64 flags;
+
+	/* modification sequence number for NFS */
+	__le64 sequence;
+
+	/*
+	 * a little future expansion, for more than this we can
+	 * just grow the inode item and version it
+	 */
+	__le64 reserved[4];
+	struct btrfs_timespec atime;
+	struct btrfs_timespec ctime;
+	struct btrfs_timespec mtime;
+	struct btrfs_timespec otime;
+} __attribute__ ((__packed__));
+
+struct btrfs_root_item_v0 {
+	struct btrfs_inode_item inode;
+	__le64 generation;
+	__le64 root_dirid;
+	__le64 bytenr;
+	__le64 byte_limit;
+	__le64 bytes_used;
+	__le64 last_snapshot;
+	__le64 flags;
+	__le32 refs;
+	struct btrfs_disk_key drop_progress;
+	u8 drop_level;
+	u8 level;
+} __attribute__ ((__packed__));
+
+struct btrfs_root_item {
+	struct btrfs_inode_item inode;
+	__le64 generation;
+	__le64 root_dirid;
+	__le64 bytenr;
+	__le64 byte_limit;
+	__le64 bytes_used;
+	__le64 last_snapshot;
+	__le64 flags;
+	__le32 refs;
+	struct btrfs_disk_key drop_progress;
+	u8 drop_level;
+	u8 level;
+
+	/*
+	 * The following fields appear after subvol_uuids+subvol_times
+	 * were introduced.
+	 */
+
+	/*
+	 * This generation number is used to test if the new fields are valid
+	 * and up to date while reading the root item. Everytime the root item
+	 * is written out, the "generation" field is copied into this field. If
+	 * anyone ever mounted the fs with an older kernel, we will have
+	 * mismatching generation values here and thus must invalidate the
+	 * new fields. See btrfs_update_root and btrfs_find_last_root for
+	 * details.
+	 * the offset of generation_v2 is also used as the start for the memset
+	 * when invalidating the fields.
+	 */
+	__le64 generation_v2;
+	u8 uuid[BTRFS_UUID_SIZE];
+	u8 parent_uuid[BTRFS_UUID_SIZE];
+	u8 received_uuid[BTRFS_UUID_SIZE];
+	__le64 ctransid; /* updated when an inode changes */
+	__le64 otransid; /* trans when created */
+	__le64 stransid; /* trans when sent. non-zero for received subvol */
+	__le64 rtransid; /* trans when received. non-zero for received subvol */
+	struct btrfs_timespec ctime;
+	struct btrfs_timespec otime;
+	struct btrfs_timespec stime;
+	struct btrfs_timespec rtime;
+	__le64 reserved[8]; /* for future */
+} __attribute__ ((__packed__));
+
+#define BTRFS_IOC_INO_LOOKUP _IOWR(BTRFS_IOCTL_MAGIC, 18, \
+                                   struct btrfs_ioctl_ino_lookup_args)
+
+#define BTRFS_INO_LOOKUP_PATH_MAX 4080 
+struct btrfs_ioctl_ino_lookup_args {
+        __u64 treeid;
+        __u64 objectid;
+        char name[BTRFS_INO_LOOKUP_PATH_MAX];
+};
+
+/*
+ * All files have objectids in this range.
+ */
+#define BTRFS_FIRST_FREE_OBJECTID 256ULL
+#define BTRFS_LAST_FREE_OBJECTID -256ULL
+#define BTRFS_FIRST_CHUNK_TREE_OBJECTID 256ULL

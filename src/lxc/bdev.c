@@ -1182,9 +1182,62 @@ static const struct bdev_ops lvm_ops = {
 	.can_snapshot = true,
 };
 
+void do_print_path(int fd, u64 dir_id, u64 objid, char *name, int name_len)
+{
+        struct btrfs_ioctl_ino_lookup_args args;
+        int ret, e;
+
+        memset(&args, 0, sizeof(args));
+        args.treeid = objid;
+        args.objectid = dir_id;
+
+        ret = ioctl(fd, BTRFS_IOC_INO_LOOKUP, &args);
+        e = errno;
+        if (ret) {
+                if (e == ENOENT) {
+			ERROR("PATHPRINT: ENOENT on %s\n", name);
+			return;
+                }
+                ERROR("PATHPRINT: ERROR: Failed to lookup path for root %llu - %s\n",
+                        (unsigned long long)objid,
+                        strerror(e));
+		return;
+        }
+
+        if (args.name[0]) {
+                /*
+                 * we're in a subdirectory of ref_tree, the kernel ioctl
+                 * puts a / in there for us
+                 */
+		INFO("PATHPRINT: full path is dir %s name %s\n", args.name, name);
+        } else {
+                /* we're at the root of ref_tree */
+		INFO("PATHPRINT: at root of ref_tree, path is %s\n", name);
+        }
+}
+
 //
 // btrfs ops
 //
+
+int btrfs_list_get_path_rootid(int fd, u64 *treeid)
+{
+        int  ret;
+        struct btrfs_ioctl_ino_lookup_args args;
+
+        memset(&args, 0, sizeof(args));
+        args.objectid = BTRFS_FIRST_FREE_OBJECTID;
+
+        ret = ioctl(fd, BTRFS_IOC_INO_LOOKUP, &args);
+        if (ret < 0) {
+                fprintf(stderr,
+                        "ERROR: can't perform the search -%s\n",
+                        strerror(errno));
+                return ret;
+        }
+        *treeid = args.treeid;
+        return 0;
+}
 
 /*
  * code borrowed and mangled from
@@ -1195,6 +1248,7 @@ static char ** btrfs_rm_subvols(const char *path)
 	struct btrfs_ioctl_search_args args;
 	struct btrfs_ioctl_search_key *sk = &args.key;
 	struct btrfs_ioctl_search_header *sh;
+	struct btrfs_root_item *ri;
 	int ret, i;
 	int fd;
 	struct btrfs_root_ref *ref;
@@ -1203,6 +1257,11 @@ static char ** btrfs_rm_subvols(const char *path)
 	int name_len;
 	char *name;
 	u64 dir_id;
+	u64 gen = 0;
+	u64 top_id;
+	u64 ogen;
+	u8 uuid[BTRFS_UUID_SIZE];
+	u8 puuid[BTRFS_UUID_SIZE];
 
 	memset(&args, 0, sizeof(args));
 
@@ -1213,15 +1272,15 @@ static char ** btrfs_rm_subvols(const char *path)
 	 * set the min and max to backref keys.  The search will
 	 * only send back this type of key now.
 	 */
-	sk->max_type = BTRFS_ROOT_BACKREF_KEY;
-	sk->min_type = BTRFS_DIR_ITEM_KEY;
+	sk->max_type = BTRFS_ROOT_REF_KEY;
+	sk->min_type = BTRFS_ROOT_ITEM_KEY;
 
 	/*
 	 * set all the other params to the max, we'll take any objectid
 	 * and any trans
 	 */
-	sk->min_objectid = BTRFS_ROOT_TREE_DIR_OBJECTID;
-	sk->max_objectid = BTRFS_ROOT_TREE_DIR_OBJECTID;
+	sk->min_objectid = 0;
+	sk->max_objectid = (u64)-1;
 
 	sk->max_offset = (u64)-1;
 	sk->min_offset = 0;
@@ -1233,6 +1292,10 @@ static char ** btrfs_rm_subvols(const char *path)
 	fd = open(path, O_RDONLY);
 	if (fd < 0)
 		return NULL;
+
+btrfs_list_get_path_rootid(fd, &top_id);
+INFO("AT START: top rootid is %lu\n", top_id);
+
 	while(1) {
 		ret = ioctl(fd, BTRFS_IOC_TREE_SEARCH, &args);
 		if (ret < 0) {
@@ -1258,7 +1321,7 @@ static char ** btrfs_rm_subvols(const char *path)
 				dir_item = (struct btrfs_dir_item *)(args.buf + off);
 				name_len = dir_item->name_len;
 				name = (char *)(dir_item + 1);
-				INFO("btrfs: found %s\n", name);
+				INFO("BTRFS_DIR_ITEM_KEY: found dir item key %s\n", name);
 
 #if 0
 				strncpy(dirname, name, name_len);
@@ -1275,13 +1338,44 @@ static char ** btrfs_rm_subvols(const char *path)
 				name = (char *)(ref + 1);
 				dir_id = ref->dirid;
 
-				INFO("backref key, objectid is %d name %s len %d dir_id %d\n",
+				INFO("BTRFS_ROOT_BACKREF_KEY: objectid is %d name %s len %d dir_id %d\n",
 					(int)sh->objectid, name, (int)name_len,
 					(int)dir_id);
 
+			} else if (sh->type == BTRFS_ROOT_REF_KEY) {
+				ref = (struct btrfs_root_ref *)(args.buf + off);
+				name_len = ref->name_len;
+				name = (char *)(ref + 1);
+				dir_id = ref->dirid;
+
+				INFO("BTRFS_ROOT_REF_KEY: objectid is %d name %s len %d dir_id %d, type %d\n",
+					(int)sh->objectid, name, (int)name_len,
+					(int)dir_id, (int)sh->type);
+				do_print_path(fd, dir_id, sh->objectid, name, name_len);
 			}
-			else
-				INFO("got sh->type %d\n", (int) sh->type);
+			else if (sh->type == BTRFS_ROOT_ITEM_KEY) {
+				ri = (struct btrfs_root_item *)(args.buf + off);
+				gen = ri->generation;
+				if(sh->len > sizeof(struct btrfs_root_item_v0)) {
+					ogen = ri->otransid;
+					memcpy(uuid, ri->uuid, BTRFS_UUID_SIZE);
+					memcpy(puuid, ri->parent_uuid, BTRFS_UUID_SIZE);
+				} else {
+					ogen = 0;
+					memset(uuid, 0, BTRFS_UUID_SIZE);
+					memset(puuid, 0, BTRFS_UUID_SIZE);
+				}
+				INFO("BTRFS_ROOT_ITEM_KEY:  objid %d ogen %lu gen %lu, root_dirid %lu\n", (int)sh->objectid, ogen, gen, (unsigned long)ri->root_dirid);
+				INFO("uuid :\n");
+				for (i = 0; i < BTRFS_UUID_SIZE; i++) {
+					INFO("%d", uuid[i]);
+				}
+				INFO("puuid :\n");
+				for (i = 0; i < BTRFS_UUID_SIZE; i++) {
+					INFO("%d", puuid[i]);
+				}
+			} else
+				INFO("UNKNOWN: got sh->type %d\n", (int) sh->type);
 			off += sh->len;
 
 			/*
@@ -1290,20 +1384,22 @@ static char ** btrfs_rm_subvols(const char *path)
 			 */
 			sk->min_objectid = sh->objectid;
 			sk->min_type = sh->type;
-			sk->max_type = sh->type;
 			sk->min_offset = sh->offset;
 		}
 		sk->nr_items = 4096;
-		/* this iteration is done, step forward one root for the next
-		 * ioctl
-		 */
-		if (sk->min_objectid < (u64)-1) {
-			sk->min_objectid = BTRFS_ROOT_TREE_DIR_OBJECTID;
-			sk->max_objectid = BTRFS_ROOT_TREE_DIR_OBJECTID;
-			sk->max_type = BTRFS_ROOT_BACKREF_KEY;
-			sk->min_type = BTRFS_ROOT_BACKREF_KEY;
-			sk->min_offset = 0;
+		sk->min_offset++;
+		if (!sk->min_offset)
+			sk->min_type++;
+		else
+			continue;
+
+		if (sk->min_type > BTRFS_ROOT_BACKREF_KEY) {
+			sk->min_type = BTRFS_ROOT_ITEM_KEY;
+			sk->min_objectid++;
 		} else
+			continue;
+
+		if (sk->min_objectid >= sk->max_objectid)
 			break;
 	}
 	close(fd);
