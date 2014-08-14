@@ -4802,3 +4802,20 @@ void suggest_default_idmap(void)
 	free(gname);
 	free(uname);
 }
+
+bool chown_container_root(struct lxc_conf *c, const char *path)
+{
+	unsigned long id;
+
+	if (lxc_list_empty(&c->id_map))
+		return true;
+	if (!get_mapped_rootid(c, ID_TYPE_UID, &id))
+		// no root user mapped into container
+		return true;
+	if (chown(path, id, -1)) {
+		SYSERROR("Failed chowning %s to container root %lu\n",
+			path, id);
+		return false;
+	}
+	return true;
+}

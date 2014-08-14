@@ -413,4 +413,5 @@ extern int parse_mntopts(const char *mntopts, unsigned long *mntflags,
 			 char **mntdata);
 extern void tmp_proc_unmount(struct lxc_conf *lxc_conf);
 extern void suggest_default_idmap(void);
+extern bool chown_container_root(struct lxc_conf *c, const char *path);
 #endif

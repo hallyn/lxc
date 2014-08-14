@@ -750,13 +750,15 @@ static bool create_container_dir(struct lxc_container *c)
 		free(s);
 		return false;
 	}
-	ret = mkdir(s, 0755);
+	ret = mkdir(s, 0750);
 	if (ret) {
 		if (errno == EEXIST)
 			ret = 0;
 		else
 			SYSERROR("failed to create container path for %s", c->name);
 	}
+	if (!chown_container_root(c->lxc_conf, s))
+		ret = -1;
 	free(s);
 	return ret == 0;
 }
