@@ -1976,11 +1976,11 @@ static unsigned long get_mount_flags(const char *path)
 			p = strtok_r(NULL, ",", &saveptr)) {
 			if (strcmp(p, "ro") == 0)
 				flags |= MS_RDONLY;
-			else if (strcmp(p, "nodev"))
+			else if (strcmp(p, "nodev") == 0)
 				flags |= MS_NODEV;
-			else if (strcmp(p, "nosuid"))
+			else if (strcmp(p, "nosuid") == 0)
 				flags |= MS_NOSUID;
-			else if (strcmp(p, "noexec"))
+			else if (strcmp(p, "noexec") == 0)
 				flags |= MS_NOEXEC;
 			/* XXX todo - we'll have to deal with atime? */
 		}
