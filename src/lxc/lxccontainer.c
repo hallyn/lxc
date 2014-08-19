@@ -3482,18 +3482,26 @@ static bool lxcapi_remove_device_node(struct lxc_container *c, const char *src_p
 }
 
 #ifdef CRIU_PATH
+/*
+ * @out must be 128 bytes long
+ */
 static int read_criu_file(const char *directory, const char *file, int netnr, char *out)
 {
 	char path[PATH_MAX];
 	int ret;
 	FILE *f;
 
-	sprintf(path, "%s/%s%d", directory, file, netnr);
+	ret = snprintf(path, PATH_MAX,  "%s/%s%d", directory, file, netnr);
+	if (ret < 0 || ret >= PATH_MAX) {
+		ERROR("%s: path too long", __func__);
+		return -1;
+	}
+
 	f = fopen(path, "r");
 	if (!f)
 		return -1;
 
-	ret = fscanf(f, "%128s", out);
+	ret = fscanf(f, "%127s", out);
 	fclose(f);
 	if (ret <= 0)
 		return -1;
@@ -3504,14 +3512,13 @@ static int read_criu_file(const char *directory, const char *file, int netnr, ch
 static void exec_criu(const char *action, const char *directory, struct lxc_container *c, char *pidfile)
 {
 	char **argv, log[PATH_MAX];
-	int static_args = 0, argc, i;
+	int static_args = 12, argc = 0, i, ret;
 	struct lxc_list *it;
 
 	/* The command line always looks like:
 	 * criu $(action) --tcp-established --file-locks --manage-cgroups \
 	 *     --action-script foo.sh -D $(directory) -o $(directory)/$(action).log
 	 * +1 for final NULL */
-	static_args += 12;
 
 	if (strcmp(action, "dump") == 0) {
 		/* -t pid */
@@ -3528,14 +3535,17 @@ static void exec_criu(const char *action, const char *directory, struct lxc_cont
 		static_args += 2;
 	}
 
-	sprintf(log, "%s/%s.log", directory, action);
+	ret = snprintf(log, PATH_MAX, "%s/%s.log", directory, action);
+	if (ret < 0 || ret >= PATH_MAX) {
+		ERROR("logfile name too long\n");
+		return;
+	}
 
 	argv = malloc(static_args * sizeof(*argv));
 	if (!argv)
 		return;
 
 	memset(argv, 0, static_args * sizeof(*argv));
-	argc = 0;
 
 #define DECLARE_ARG(arg) 			\
 	do {					\
@@ -3585,7 +3595,8 @@ static void exec_criu(const char *action, const char *directory, struct lxc_cont
 				goto err;
 			if (read_criu_file(directory, "eth", netnr, eth))
 				goto err;
-			if (sprintf(buf, "%s=%s", eth, veth) < 0)
+			ret = snprintf(buf, 257, "%s=%s", eth, veth);
+			if (ret < 0 || ret >= 257)
 				goto err;
 
 			/* final NULL and --veth-pair eth0:vethASDF */
@@ -3619,6 +3630,11 @@ static int lxcapi_checkpoint(struct lxc_container *c, char *directory)
 	struct lxc_list *it;
 	pid_t pid;
 
+	if (geteuid()) {
+		ERROR("Must be root to checkpoint\n");
+		return -1;
+	}
+
 	/* We only know how to restore containers with veth networks. */
 	lxc_list_for_each(it, &c->lxc_conf->network) {
 		struct lxc_netdev *n = it->elem;
@@ -3631,29 +3647,40 @@ static int lxcapi_checkpoint(struct lxc_container *c, char *directory)
 
 	netnr = 0;
 	lxc_list_for_each(it, &c->lxc_conf->network) {
-		char *veth, *bridge, veth_path[PATH_MAX], eth[128];
+		char *veth = NULL, *bridge = NULL, veth_path[PATH_MAX], eth[128];
 		struct lxc_netdev *n = it->elem;
+		int pret;
 
-		sprintf(veth_path, "lxc.network.%d.veth.pair", netnr);
-		veth = c->get_running_config_item(c, veth_path);
-		if (!veth)
-			break;
-
-		sprintf(veth_path, "lxc.network.%d.link", netnr);
-		bridge = c->get_running_config_item(c, veth_path);
-		if (!bridge) {
-			free(veth);
-			break;
-		}
-
-		sprintf(veth_path, "%s/veth%d", directory, netnr);
-		if (print_to_file(veth_path, veth) < 0) {
+		pret = snprintf(veth_path, PATH_MAX, "lxc.network.%d.veth.pair", netnr);
+		if (pret < 0 || pret >= PATH_MAX) {
 			ret = -1;
 			goto out;
 		}
 
-		sprintf(veth_path, "%s/bridge%d", directory, netnr);
-		if (print_to_file(veth_path, bridge) < 0) {
+		veth = c->get_running_config_item(c, veth_path);
+		if (!veth)  // XXX do we want to break or exit here?
+			break;
+
+		pret = snprintf(veth_path, PATH_MAX, "lxc.network.%d.link", netnr);
+		if (pret < 0 || pret >= PATH_MAX) {
+			ret = -1;
+			goto out;
+		}
+
+		bridge = c->get_running_config_item(c, veth_path);
+		if (!bridge) {
+			ret = -1;
+			goto out;
+		}
+
+		pret = snprintf(veth_path, PATH_MAX, "%s/veth%d", directory, netnr);
+		if (pret < 0 || pret >= PATH_MAX || print_to_file(veth_path, veth) < 0) {
+			ret = -1;
+			goto out;
+		}
+
+		pret = snprintf(veth_path, PATH_MAX, "%s/bridge%d", directory, netnr);
+		if (pret < 0 || pret >= PATH_MAX || print_to_file(veth_path, bridge) < 0) {
 			ret = -1;
 			goto out;
 		}
@@ -3661,13 +3688,11 @@ static int lxcapi_checkpoint(struct lxc_container *c, char *directory)
 		if (n->name)
 			strncpy(eth, n->name, 128);
 		else
-			snprintf(eth, 128, "eth%d", netnr);
+			sprintf(eth, "eth%d", netnr);
 
-		sprintf(veth_path, "%s/eth%d", directory, netnr);
-		if (print_to_file(veth_path, eth) < 0) {
+		pret = snprintf(veth_path, PATH_MAX, "%s/eth%d", directory, netnr);
+		if (pret < 0 || pret >= PATH_MAX || print_to_file(veth_path, eth) < 0)
 			ret = -1;
-			goto out;
-		}
 
 out:
 		free(veth);
@@ -3710,6 +3735,10 @@ static int lxcapi_restore(struct lxc_container *c, char *directory)
 	struct lxc_rootfs *rootfs;
 	char pidfile[L_tmpnam];
 
+	if (geteuid()) {
+		ERROR("Must be root to restore\n");
+		return -1;
+	}
 	/* We only know how to restore containers with veth networks. */
 	lxc_list_for_each(it, &c->lxc_conf->network) {
 		struct lxc_netdev *n = it->elem;
@@ -3779,6 +3808,12 @@ static int lxcapi_restore(struct lxc_container *c, char *directory)
 					return -1;
 				}
 
+				/*
+				 * XXX
+				 * I realize criu currently only works for x86_64, however
+				 * pid_t is NOT a long, it is an int.  So this is an
+				 * arch-dependent time-bomb.  Can we just read it as an int?
+				 */
 				ret = fscanf(f, "%ld", (long*) &handler->pid);
 				fclose(f);
 				if (ret != 1) {
@@ -3803,6 +3838,10 @@ static int lxcapi_restore(struct lxc_container *c, char *directory)
 						goto out_unlock;
 					}
 					netdev->priv.veth_attr.pair = strdup(veth);
+					if (!netdev->priv.veth_attr.pair) {
+						ret = -1;
+						goto out_unlock;
+					}
 					netnr++;
 				}
 out_unlock:
