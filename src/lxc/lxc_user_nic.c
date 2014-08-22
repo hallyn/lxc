@@ -592,7 +592,7 @@ int main(int argc, char *argv[])
 
 	/* set a sane path, because we are setuid-root */
 	if (setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1) < 0) {
-		fprintf("Failed to set PATH, exiting\n");
+		fprintf(stderr, "Failed to set PATH, exiting\n");
 		exit(1);
 	}
 	if ((me = get_username()) == NULL) {
