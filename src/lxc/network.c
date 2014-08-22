@@ -1190,16 +1190,15 @@ static int attach_to_ovs_bridge(const char *bridge, const char *nic)
 	cmd = on_path("ovs-vsctl", NULL);
 	if (!cmd)
 		return -1;
+	free(cmd);
 
 	pid = fork();
 	if (pid < 0)
 		return -1;
-	if (pid > 0) {
-		free(cmd);
+	if (pid > 0)
 		return wait_for_pid(pid);
-	}
 
-	if (execl(cmd, "ovs-vsctl", "add-port", bridge, nic, NULL))
+	if (execlp("ovs-vsctl", "ovs-vsctl", "add-port", bridge, nic, NULL))
 		exit(1);
 	// not reached
 	exit(1);
