@@ -36,6 +36,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <net/if.h>
+#include <time.h>
 
 #include "parse.h"
 #include "config.h"
@@ -2478,93 +2479,83 @@ bool clone_update_unexp_hooks(struct lxc_conf *conf, const char *oldpath,
 	} \
 }
 
-bool clone_update_unexp_network(struct lxc_conf *c)
+static void new_hwaddr(char *hwaddr)
+{
+	FILE *f;
+	f = fopen("/dev/urandom", "r");
+	if (f) {
+		unsigned int seed;
+		int ret = fread(&seed, sizeof(seed), 1, f);
+		if (ret != 1)
+			seed = time(NULL);
+		fclose(f);
+		srand(seed);
+	} else
+		srand(time(NULL));
+	snprintf(hwaddr, 18, "00:16:3e:%02x:%02x:%02x",
+			rand() % 255, rand() % 255, rand() % 255);
+}
+
+/*
+ * This is called only from clone.
+ * We wish to update all hwaddrs in the unexpanded config file.  We
+ * can't/don't want to update any which come from lxc.includes (there
+ * shouldn't be any).
+ * We can't just walk the c->lxc-conf->network list because that includes
+ * netifs from the include files.  So we update the ones which we find in
+ * the unexp config file, then find the original macaddr in the
+ * conf->network, and update that to the same value.
+ */
+bool network_new_hwaddrs(struct lxc_conf *conf)
 {
 	struct lxc_list *it;
 
-	clear_unexp_config_line(c, "lxc.network", true);
+	const char *key = "lxc.network.hwaddr";
+	char *lstart = conf->unexpanded_config, *lend, *p, *p2;
 
-	lxc_list_for_each(it, &c->network) {
-		struct lxc_netdev *n = it->elem;
-		const char *t = lxc_net_type_to_str(n->type);
-		struct lxc_list *it2;
-		DO(do_append_unexp_config_line(c, "lxc.network.type", t ? t : "(invalid)"));
-		if (n->flags & IFF_UP)
-			DO(do_append_unexp_config_line(c, "lxc.network.flags", "up"));
-		if (n->link)
-			DO(do_append_unexp_config_line(c, "lxc.network.link", n->link));
-		if (n->name)
-			DO(do_append_unexp_config_line(c, "lxc.network.name", n->name));
-		if (n->type == LXC_NET_MACVLAN) {
-			const char *mode;
-			switch (n->priv.macvlan_attr.mode) {
-			case MACVLAN_MODE_PRIVATE: mode = "private"; break;
-			case MACVLAN_MODE_VEPA: mode = "vepa"; break;
-			case MACVLAN_MODE_BRIDGE: mode = "bridge"; break;
-			default: mode = "(invalid)"; break;
-			}
-			DO(do_append_unexp_config_line(c, "lxc.network.macvlan.mode", mode));
-		} else if (n->type == LXC_NET_VETH) {
-			if (n->priv.veth_attr.pair)
-				DO(do_append_unexp_config_line(c, "lxc.network.veth.pair", n->priv.veth_attr.pair));
-		} else if (n->type == LXC_NET_VLAN) {
-			char vid[20];
-			sprintf(vid, "%d", n->priv.vlan_attr.vid);
-			DO(do_append_unexp_config_line(c, "lxc.network.vlan.id", vid));
+	if (!conf->unexpanded_config)
+		return true;
+	while (*lstart) {
+		char newhwaddr[18], oldhwaddr[17];
+		lend = strchr(lstart, '\n');
+		if (!lend)
+			lend = lstart + strlen(lstart);
+		else
+			lend++;
+		if (strncmp(lstart, key, strlen(key)) != 0) {
+			lstart = lend;
+			continue;
 		}
-		if (n->upscript)
-			DO(do_append_unexp_config_line(c, "lxc.network.script.up", n->upscript));
-		if (n->downscript)
-			DO(do_append_unexp_config_line(c, "lxc.network.script.down", n->downscript));
-		if (n->hwaddr)
-			DO(do_append_unexp_config_line(c, "lxc.network.hwaddr", n->hwaddr));
-		if (n->mtu)
-			DO(do_append_unexp_config_line(c, "lxc.network.mtu", n->mtu));
-		if (n->ipv4_gateway_auto) {
-			DO(do_append_unexp_config_line(c, "lxc.network.ipv4.gateway", "auto"));
-		} else if (n->ipv4_gateway) {
-			char buf[INET_ADDRSTRLEN];
-			inet_ntop(AF_INET, n->ipv4_gateway, buf, sizeof(buf));
-			DO(do_append_unexp_config_line(c, "lxc.network.ipv4.gateway", buf));
+		p = strchr(lstart+strlen(key), '=');
+		if (!p) {
+			lstart = lend;
+			continue;
 		}
-		lxc_list_for_each(it2, &n->ipv4) {
-			struct lxc_inetdev *i = it2->elem;
-			char buf[2*INET_ADDRSTRLEN+20], buf2[INET_ADDRSTRLEN], prefix[20];
-			inet_ntop(AF_INET, &i->addr, buf, INET_ADDRSTRLEN);
+		p++;
+		while (isblank(*p))
+			p++;
+		if (!p)
+			return true;
+		p2 = p;
+		while (*p2 && !isblank(*p2))
+			p2++;
+		if (p2-p != 17) {
+			WARN("Bad hwaddr entry");
+			lstart = lend;
+			continue;
+		}
+		memcpy(oldhwaddr, p, 17);
+		new_hwaddr(newhwaddr);
+		memcpy(p, newhwaddr, 17);
+		lxc_list_for_each(it, &conf->network) {
+			struct lxc_netdev *n = it->elem;
+			if (n->hwaddr && memcmp(oldhwaddr, n->hwaddr, 17) == 0)
+				memcpy(n->hwaddr, newhwaddr, 17);
+		}
 
-			if (i->prefix) {
-				sprintf(prefix, "/%d", i->prefix);
-				strcat(buf, prefix);
-			}
-
-			if (i->bcast.s_addr != (i->addr.s_addr |
-			    htonl(INADDR_BROADCAST >>  i->prefix))) {
-
-				inet_ntop(AF_INET, &i->bcast, buf2, sizeof(buf2));
-				strcat(buf, " ");
-				strcat(buf, buf2);
-			}
-			DO(do_append_unexp_config_line(c, "lxc.network.ipv4", buf));
-		}
-		if (n->ipv6_gateway_auto) {
-			DO(do_append_unexp_config_line(c, "lxc.network.ipv6.gateway", "auto"));
-		} else if (n->ipv6_gateway) {
-			char buf[INET6_ADDRSTRLEN];
-			inet_ntop(AF_INET6, n->ipv6_gateway, buf, sizeof(buf));
-			DO(do_append_unexp_config_line(c, "lxc.network.ipv6.gateway", buf));
-		}
-		lxc_list_for_each(it2, &n->ipv6) {
-			struct lxc_inet6dev *i = it2->elem;
-			char buf[INET6_ADDRSTRLEN + 20], prefix[20];
-			inet_ntop(AF_INET6, &i->addr, buf, INET6_ADDRSTRLEN);
-			if (i->prefix) {
-				sprintf(prefix, "/%d", i->prefix);
-				strcat(buf, prefix);
-			}
-			DO(do_append_unexp_config_line(c, "lxc.network.ipv6", buf));
-		}
+		lstart = lend;
 	}
-	lxc_list_for_each(it, &c->environment)
-		DO(do_append_unexp_config_line(c, "lxc.environment", (char *)it->elem));
+	return true;
+
 	return true;
 }

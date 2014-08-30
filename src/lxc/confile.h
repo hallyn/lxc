@@ -61,5 +61,5 @@ extern bool do_append_unexp_config_line(struct lxc_conf *conf, const char *key, 
 extern void clear_unexp_config_line(struct lxc_conf *conf, const char *key, bool rm_subkeys);
 extern bool clone_update_unexp_hooks(struct lxc_conf *conf, const char *oldpath,
 	const char *newpath, const char *oldname, const char *newmame);
-extern bool clone_update_unexp_network(struct lxc_conf *c);
+extern bool network_new_hwaddrs(struct lxc_conf *conf);
 #endif
