@@ -2434,7 +2434,8 @@ static int copyhooks(struct lxc_container *oldc, struct lxc_container *c)
 		}
 	}
 
-	if (!clone_update_unexp_hooks(c->lxc_conf)) {
+	if (!clone_update_unexp_hooks(c->lxc_conf, oldc->config_path,
+			c->config_path, oldc->name, c->name)) {
 		ERROR("Error saving new hooks in clone");
 		return -1;
 	}

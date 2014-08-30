@@ -2407,16 +2407,65 @@ void clear_unexp_config_line(struct lxc_conf *conf, const char *key, bool rm_sub
 	}
 }
 
-bool clone_update_unexp_hooks(struct lxc_conf *c)
+bool clone_update_unexp_hooks(struct lxc_conf *conf, const char *oldpath,
+	const char *newpath, const char *oldname, const char *newname)
 {
-	struct lxc_list *it;
-	int i;
+	const char *key = "lxc.hook";
+	char *lstart = conf->unexpanded_config, *lend, *p;
+	size_t newdirlen = strlen(newpath) + strlen(newname) + 1;
+	size_t olddirlen = strlen(oldpath) + strlen(oldname) + 1;
+	char *olddir = alloca(olddirlen + 1);
+	char *newdir = alloca(newdirlen + 1);
 
-	clear_unexp_config_line(c, "lxc.hook", true);
-	for (i=0; i<NUM_LXC_HOOKS; i++) {
-		lxc_list_for_each(it, &c->hooks[i]) {
-			if (!do_append_unexp_config_line(c, lxchook_names[i], (char *)it->elem))
+	if (!conf->unexpanded_config)
+		return true;
+	while (*lstart) {
+		lend = strchr(lstart, '\n');
+		if (!lend)
+			lend = lstart + strlen(lstart);
+		else
+			lend++;
+		if (strncmp(lstart, key, strlen(key)) != 0) {
+			lstart = lend;
+			continue;
+		}
+		p = strchr(lstart+strlen(key), '=');
+		if (!p) {
+			lstart = lend;
+			continue;
+		}
+		p++;
+		while (isblank(p))
+			p++;
+		if (!p)
+			return true;
+		if (strncmp(p, olddir, strlen(olddir)) != 0) {
+			lstart = lend;
+			continue;
+		}
+		/* replace the olddir with newdir */
+		if (olddirlen >= newdirlen) {
+			size_t diff = olddirlen - newdirlen;
+			memcpy(p, newdir, newdirlen);
+			if (olddirlen != newdirlen) {
+				memmove(lend-diff, lend, strlen(lend)+1);
+				lend -= diff;
+				conf->unexpanded_len -= diff;
+			}
+			lstart = lend;
+		} else {
+			char *new;
+			size_t newlen = conf->unexpanded_len + newdirlen - olddirlen;
+			new = realloc(conf->unexpanded_config, newlen);
+			if (!new) {
+				ERROR("Out of memory");
 				return false;
+			}
+			conf->unexpanded_len = newlen;
+			new[newlen-1] = '\0';
+			conf->unexpanded_config = new;
+			memcpy(p, newdir, newdirlen);
+			lstart = lend + newdirlen - olddirlen;
 		}
 	}
 	return true;
