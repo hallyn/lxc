@@ -153,7 +153,7 @@ static int apparmor_process_label_set(struct lxc_conf *conf, int use_default,
 			label = "unconfined";
 	}
 
-	if (!mount_feature_enabled() && strcmp(label, "unconfined") != 0)
+	if (!mount_feature_enabled() && strcmp(label, "unconfined") != 0) {
 		WARN("Incomplete AppArmor support in your kernel");
 		if (!conf->lsm_aa_allow_incomplete) {
 			ERROR("If you really want to start this container, set");
