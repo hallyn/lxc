@@ -1,0 +1,122 @@
+#!/bin/sh
+
+# apparmor_mount: test proper handling of apparmor in kernels
+# without mount features
+
+# These require the ubuntu lxc package to be installed.
+
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2.1 of the License, or (at your option) any later version.
+
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+
+set -e
+
+FAIL() {
+	echo -n "Failed " >&2
+	echo "$*" >&2
+	exit 1
+}
+
+MOUNTSR=/sys/kernel/security/apparmor/features/mount
+dnam=`mktemp -d`
+cname=`basename $dnam`
+cleanup() {
+	lxc-destroy -f -n $cname || true
+	umount -l $MOUNTSR || true
+	rmdir $dnam || true
+}
+
+trap cleanup exit
+
+# Only run on a normally configured ubuntu lxc system
+if [ ! -d /sys/class/net/lxcbr0 ]; then
+	echo "lxcbr0 is not configured."
+	exit 1
+fi
+if [ "$(id -u)" != "0" ]; then
+	echo "ERROR: Must run as root."
+	exit 1
+fi
+
+lxc-create -t busybox -n $cname
+echo "test default confined container"
+lxc-start -n $cname -d
+lxc-wait -n $cname -s RUNNING
+pid=`lxc-info -p -H -n $cname`
+profile=`cat /proc/$pid/attr/current`
+if [ "x$profile" != "xlxc-container-default (enforce)" ]; then
+	echo "FAIL: confined container was in profile $profile"
+	exit 1
+fi
+lxc-stop -n $cname
+
+echo "test regular unconfined container"
+echo "lxc.aa_profile = unconfined" >> /var/lib/lxc/$cname/config
+lxc-start -n $cname -d
+lxc-wait -n $cname -s RUNNING
+pid=`lxc-info -p -H -n $cname`
+profile=`cat /proc/$pid/attr/current`
+if [ "x$profile" != "xunconfined" ]; then
+	echo "FAIL: confined container was in profile $profile"
+	exit 1
+fi
+lxc-stop -n $cname
+
+echo "masking $MOUNTSR"
+mount --bind $dnam $MOUNTSR
+
+echo "test default confined container"
+sed -i '/aa_profile/d' /var/lib/lxc/$cname/config
+lxc-start -n $cname -d
+sleep 3
+pid=`lxc-info -p -H -n $cname`
+if [ "$pid" != "-1" ]; then
+	echo "FAIL: confined container started without mount restrictions"
+	exit 1
+fi
+lxc-stop -n $cname
+
+echo "test regular unconfined container"
+echo "lxc.aa_profile = unconfined" >> /var/lib/lxc/$cname/config
+lxc-start -n $cname -d
+lxc-wait -n $cname -s RUNNING
+pid=`lxc-info -p -H -n $cname`
+if [ "$pid" = "-1" ]; then
+	echo "FAIL: unconfined container failed to start without mount restrictions"
+	exit 1
+fi
+profile=`cat /proc/$pid/attr/current`
+if [ "x$profile" != "xunconfined" ]; then
+	echo "FAIL: confined container was in profile $profile"
+	exit 1
+fi
+lxc-stop -n $cname
+
+echo "testing override"
+sed -s '/aa_profile/d' /var/lib/lxc/$cname/config
+echo "lxc.aa_allow_incomplete = 1" >> /var/lib/lxc/$cname/config
+lxc-start -n $cname -d
+lxc-wait -n $cname -s RUNNING
+pid=`lxc-info -p -H -n $cname`
+if [ "$pid" = "-1" ]; then
+	echo "FAIL: excepted container failed to start without mount restrictions"
+	exit 1
+fi
+profile=`cat /proc/$pid/attr/current`
+if [ "x$profile" != "xlxc-container-default (enforce)" ]; then
+	echo "FAIL: confined container was in profile $profile"
+	exit 1
+fi
+lxc-stop -n $cname
+
+echo "PASS"

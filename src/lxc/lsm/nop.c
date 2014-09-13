@@ -29,7 +29,7 @@ static char *nop_process_label_get(pid_t pid)
 	return NULL;
 }
 
-static int nop_process_label_set(const char *label, int use_default,
+static int nop_process_label_set(struct lxc_conf *conf, int use_default,
 				 int on_exec)
 {
 	return 0;
