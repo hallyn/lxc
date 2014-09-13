@@ -52,6 +52,7 @@ bin_SCRIPTS = lxc-test-autostart
 
 if DISTRO_UBUNTU
 bin_SCRIPTS += \
+	lxc-test-apparmor-mount \
 	lxc-test-checkpoint-restore \
 	lxc-test-ubuntu \
 	lxc-test-unpriv \
