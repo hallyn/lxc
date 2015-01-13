@@ -71,7 +71,7 @@ static void usage(char *cmd)
 	fprintf(stderr, "%s <options> command [command_arguments]\n", basename(cmd));
 	fprintf(stderr, "Options are:\n");
 	fprintf(stderr, "\t -s flags   : ORed list of flags to unshare:\n" \
-			"\t           MOUNT, PID, UTSNAME, IPC, USER, NETWORK\n");
+			"\t           MOUNT, PID, UTSNAME, IPC, USER, NETWORK, CGROUP\n");
 	fprintf(stderr, "\t -u <id>      : new id to be set if -s USER is specified\n");
 	fprintf(stderr, "\t -i <iface>   : Interface name to be moved into container (presumably with NETWORK unsharing set)\n");
 	fprintf(stderr, "\t -H <hostname>: Set the hostname in the container\n");

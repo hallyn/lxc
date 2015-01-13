@@ -80,7 +80,8 @@ const struct ns_info ns_info[LXC_NS_MAX] = {
 	[LXC_NS_UTS] = {"uts", CLONE_NEWUTS},
 	[LXC_NS_IPC] = {"ipc", CLONE_NEWIPC},
 	[LXC_NS_USER] = {"user", CLONE_NEWUSER},
-	[LXC_NS_NET] = {"net", CLONE_NEWNET}
+	[LXC_NS_NET] = {"net", CLONE_NEWNET},
+	[LXC_NS_CGROUP] = {"cgroup", CLONE_NEWCG}
 };
 
 static void print_top_failing_dir(const char *path)
@@ -668,6 +669,12 @@ static int do_start(void *data)
 		}
 	}
 
+	/* unshare cgroup namespace -- TODO figure out when we can */
+	if (unshare(CLONE_NEWCG)) {
+		SYSERROR("failed to unshare new cgroup ns");
+		goto out_warn_father;
+	}
+
 	if (access(handler->lxcpath, X_OK)) {
 		print_top_failing_dir(handler->lxcpath);
 		goto out_warn_father;
@@ -800,7 +807,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 	if (lxc_sync_init(handler))
 		return -1;
 
-	handler->clone_flags = CLONE_NEWPID|CLONE_NEWNS;
+	handler->clone_flags = CLONE_NEWPID|CLONE_NEWNS|CLONE_NEWCG;
 	if (!lxc_list_empty(&handler->conf->id_map)) {
 		INFO("Cloning a new user namespace");
 		handler->clone_flags |= CLONE_NEWUSER;
@@ -892,7 +899,7 @@ static int lxc_spawn(struct lxc_handler *handler)
 	}
 
 	/* Create a process in a new set of namespaces */
-	handler->pid = lxc_clone(do_start, handler, handler->clone_flags);
+	handler->pid = lxc_clone(do_start, handler, handler->clone_flags & ~CLONE_NEWCG);
 	if (handler->pid < 0) {
 		SYSERROR("failed to fork into a new namespace");
 		goto out_delete_net;

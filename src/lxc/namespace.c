@@ -71,11 +71,11 @@ pid_t lxc_clone(int (*fn)(void *), void *arg, int flags)
 
 static const char * const namespaces_list[] = {
 	"MOUNT", "PID", "UTSNAME", "IPC",
-	"USER", "NETWORK"
+	"USER", "NETWORK", "CGROUP"
 };
 static const int cloneflags_list[] = {
 	CLONE_NEWNS, CLONE_NEWPID, CLONE_NEWUTS, CLONE_NEWIPC,
-	CLONE_NEWUSER, CLONE_NEWNET
+	CLONE_NEWUSER, CLONE_NEWNET, CLONE_NEWCG
 };
 
 int lxc_namespace_2_cloneflag(char *namespace)

@@ -143,10 +143,10 @@ static int lxc_attach_to_ns(pid_t pid, int which)
 	 * the file for user namepsaces in /proc/$pid/ns will be called
 	 * 'user' once the kernel supports it
 	 */
-	static char *ns[] = { "user", "mnt", "pid", "uts", "ipc", "net" };
+	static char *ns[] = { "user", "mnt", "pid", "uts", "ipc", "net", "cgroup" };
 	static int flags[] = {
 		CLONE_NEWUSER, CLONE_NEWNS, CLONE_NEWPID, CLONE_NEWUTS, CLONE_NEWIPC,
-		CLONE_NEWNET
+		CLONE_NEWNET, CLONE_NEWCG
 	};
 	static const int size = sizeof(ns) / sizeof(char *);
 	int fd[size];

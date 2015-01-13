@@ -265,7 +265,7 @@ static int find_default_map(void)
 int main(int argc, char *argv[])
 {
 	int c;
-	unsigned long flags = CLONE_NEWUSER | CLONE_NEWNS;
+	unsigned long flags = CLONE_NEWUSER | CLONE_NEWNS | CLONE_NEWCG;
 	char ttyname[256];
 	int status;
 	int ret;

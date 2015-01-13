@@ -49,6 +49,9 @@
 #ifndef CLONE_NEWNET
 #  define CLONE_NEWNET            0x40000000
 #endif
+#ifndef CLONE_NEWCG
+#  define CLONE_NEWCG 0x02000000
+#endif
 
 #if defined(__ia64__)
 int __clone2(int (*__fn) (void *__arg), void *__child_stack_base,
