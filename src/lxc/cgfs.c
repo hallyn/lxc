@@ -352,6 +352,7 @@ static bool find_cgroup_hierarchies(struct cgroup_meta_data *meta_data,
 		if (!colon2 || *colon2)
 			continue;
 
+		hierarchy_number++;
 		if (hierarchy_number > meta_data->maximum_hierarchy) {
 			/* lxc_grow_array will never shrink, so even if we find a lower
 			* hierarchy number here, the array will never be smaller
@@ -490,6 +491,10 @@ static bool find_hierarchy_mountpts( struct cgroup_meta_data *meta_data, char **
 		}
 		lxc_free_array((void **)subsystems, free);
 
+		if (!h) {
+			ERROR("Failed to find mount point for %s\n", meta_data->hierarchies[k]->subsystems[0]);
+			goto out;
+		}
 		r = lxc_grow_array((void ***)&meta_data->mount_points, &mount_point_capacity, mount_point_count + 1, 12);
 		if (r < 0)
 			goto out;
@@ -786,6 +791,63 @@ static char *cgroup_rename_nsgroup(const char *mountpath, const char *oldname, p
 	return newname;
 }
 
+void
+fill_cgroup_subtree_control(struct cgroup_mount_point *mp, const char *p)
+{
+	char *fullpath, data[1024], data2[1024], *outdata;
+	ssize_t len;
+	char *token, *saveptr = NULL, *str;
+
+	if (strlen(p) > 5) {
+		INFO("not filling in cgroup.subtree_control for container");
+		return;
+	}
+	INFO("XXX passed %s\n", p);
+	fullpath = cgroup_to_absolute_path(mp, p, "/cgroup.controllers");
+	if (!fullpath) {
+		ERROR("failed getting cgroup.controllers path");
+		return;
+	}
+	INFO("fullpath is %s", fullpath);
+	int fd = open(fullpath, O_RDONLY);
+	free(fullpath);
+	if (fd < 0) {
+		SYSERROR("Error opening cgroup.controllers file");
+		return;
+	}
+	len = read(fd, data, 1024);
+	if (len < 0 || len > 1024) {
+		SYSERROR("Failure reading cgroup.controllers (%d)", (int)len);
+		return;
+	}
+	if (!len)
+		return;
+	close(fd);
+	outdata = data2;
+	for (str = data; (token = strtok_r(str, " ", &saveptr)); str = NULL) {
+		int x = sprintf(outdata, "+%s ", token);
+		outdata += x;
+	}
+	INFO("Writing %s\n", data2);
+	fullpath = cgroup_to_absolute_path(mp, p, "/cgroup.subtree_control");
+	if (!fullpath) {
+		ERROR("failed getting cgroup.controllers path");
+		return;
+	}
+	INFO("fullpath is %s", fullpath);
+	fd = open(fullpath, O_WRONLY);
+	free(fullpath);
+	if (fd < 0) {
+		SYSERROR("Error opening subtree control file");
+		return;
+	}
+	if (write(fd, data2, strlen(data2)) < 0) {
+		SYSERROR("Error writing active cgroup controllers");
+		return;
+	}
+	close(fd);
+}
+
 /* create a new cgroup */
 static struct cgroup_process_info *lxc_cgroupfs_create(const char *name, const char *path_pattern, struct cgroup_meta_data *meta_data, const char *sub_pattern)
 {
@@ -960,6 +1022,7 @@ static struct cgroup_process_info *lxc_cgroupfs_create(const char *name, const c
 				r = lxc_grow_array((void ***)&info_ptr->created_paths, &info_ptr->created_paths_capacity, info_ptr->created_paths_count + 1, 8);
 				if (r < 0)
 					goto cleanup_from_error;
+				fill_cgroup_subtree_control(info_ptr->designated_mount_point, current_entire_path);
 				if (!init_cpuset_if_needed(info_ptr->designated_mount_point, current_entire_path)) {
 					ERROR("Failed to initialize cpuset for '%s' in '%s'.", current_entire_path, info_ptr->designated_mount_point->mount_point);
 					goto cleanup_from_error;
@@ -969,6 +1032,7 @@ static struct cgroup_process_info *lxc_cgroupfs_create(const char *name, const c
 				/* if we didn't create the cgroup, then we have to make sure that
 				 * further cgroups will be created properly
 				 */
+				fill_cgroup_subtree_control(info_ptr->designated_mount_point, info_ptr->cgroup_path);
 				if (handle_cgroup_settings(info_ptr->designated_mount_point, info_ptr->cgroup_path) < 0) {
 					ERROR("Could not set clone_children to 1 for cpuset hierarchy in pre-existing cgroup.");
 					goto cleanup_from_error;
@@ -1151,7 +1215,7 @@ static int lxc_cgroupfs_enter(struct cgroup_process_info *info, pid_t pid, bool 
 			}
 		}
 
-		cgroup_tasks_fn = cgroup_to_absolute_path(info_ptr->designated_mount_point, cgroup_path, "/tasks");
+		cgroup_tasks_fn = cgroup_to_absolute_path(info_ptr->designated_mount_point, cgroup_path, "/cgroup.procs");
 		if (!cgroup_tasks_fn) {
 			SYSERROR("Could not add pid %lu to cgroup %s: internal error", (unsigned long)pid, cgroup_path);
 			return -1;
@@ -1625,6 +1689,7 @@ lxc_cgroup_process_info_getx(const char *proc_pid_cgroup_str,
 		if (!endptr || *endptr)
 			continue;
 
+		hierarchy_number++;
 		if (hierarchy_number > meta->maximum_hierarchy) {
 			/* we encountered a hierarchy we didn't have before,
 			 * so probably somebody remounted some stuff in the
@@ -2024,7 +2089,7 @@ static int cgroup_recursive_task_count(const char *cgroup_path)
 			r = cgroup_recursive_task_count(sub_path);
 			if (r >= 0)
 				n += r;
-		} else if (!strcmp(dent->d_name, "tasks")) {
+		} else if (!strcmp(dent->d_name, "cgroup.procs")) {
 			r = count_lines(sub_path);
 			if (r >= 0)
 				n += r;
