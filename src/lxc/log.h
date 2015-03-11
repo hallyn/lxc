@@ -294,18 +294,14 @@ ATTR_UNUSED static inline void LXC_##PRIORITY(struct lxc_log_locinfo* locinfo,	\
 	ERROR("%s - " format, strerror(errno), ##__VA_ARGS__);		\
 } while (0)
 
-#ifdef HAVE_TLS
-extern __thread int lxc_log_fd;
-#else
 extern int lxc_log_fd;
-#endif
 
 extern int lxc_log_init(const char *name, const char *file,
 			const char *priority, const char *prefix, int quiet,
 			const char *lxcpath);
 
-extern int lxc_log_set_file(const char *fname);
-extern int lxc_log_set_level(int level);
+extern int lxc_log_set_file(char **dest, int *fd, const char *fname);
+extern int lxc_log_set_level(int *dest, int level);
 extern void lxc_log_set_prefix(const char *prefix);
 extern const char *lxc_log_get_file(void);
 extern int lxc_log_get_level(void);
