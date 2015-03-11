@@ -159,12 +159,12 @@ static int _recursive_rmdir_onedev(char *dirname, dev_t pdev,
 }
 
 /* returns 0 on success, -1 if there were any failures */
-extern int lxc_rmdir_onedev(char *path, const char *exclude)
+extern int lxc_rmdir_onedev(struct lxc_conf *c, char *path, const char *exclude)
 {
 	struct stat mystat;
 
 	if (lstat(path, &mystat) < 0) {
-		ERROR("%s: failed to stat %s", __func__, path);
+		ERROR(c, "%s: failed to stat %s", __func__, path);
 		return -1;
 	}
 

@@ -68,6 +68,7 @@ struct bdev {
 	int lofd;
 	// index for the connected nbd device
 	int nbd_idx;
+	struct lxc_conf *conf;
 };
 
 char *overlay_getlower(char *p);

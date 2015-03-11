@@ -2563,6 +2563,7 @@ struct lxc_conf *lxc_conf_init(void)
 		return NULL;
 	}
 	new->kmsg = 0;
+	new->logfd = -1;
 	lxc_list_init(&new->cgroup);
 	lxc_list_init(&new->network);
 	lxc_list_init(&new->mount_list);
@@ -4231,6 +4232,8 @@ void lxc_conf_free(struct lxc_conf *conf)
 	free(conf->rootfs.pivot);
 	free(conf->logfile);
 	free(conf->utsname);
+	if (conf->logfd != -1)
+		close(conf->logfd);
 	free(conf->ttydir);
 	free(conf->fstab);
 	free(conf->rcfile);

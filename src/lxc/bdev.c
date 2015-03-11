@@ -123,7 +123,7 @@ static int blk_getsize(struct bdev *bdev, uint64_t *size)
  * the callback system, they can be pulled from there eventually, so we
  * don't need to pollute utils.c with these low level functions
  */
-static int find_fstype_cb(char* buffer, void *data)
+static int find_fstype_cb(char* buffer, void *data, struct lxc_conf *conf)
 {
 	struct cbarg {
 		const char *rootfs;
@@ -143,7 +143,7 @@ static int find_fstype_cb(char* buffer, void *data)
 	fstype += lxc_char_left_gc(fstype, strlen(fstype));
 	fstype[lxc_char_right_gc(fstype, strlen(fstype))] = '\0';
 
-	DEBUG("trying to mount '%s'->'%s' with fstype '%s'",
+	DEBUG(conf, "trying to mount '%s'->'%s' with fstype '%s'",
 	      cbarg->rootfs, cbarg->target, fstype);
 
 	if (parse_mntopts(cbarg->options, &mntflags, &mntdata) < 0) {
@@ -152,21 +152,21 @@ static int find_fstype_cb(char* buffer, void *data)
 	}
 
 	if (mount(cbarg->rootfs, cbarg->target, fstype, mntflags, mntdata)) {
-		DEBUG("mount failed with error: %s", strerror(errno));
+		DEBUG(conf, "mount failed with error: %s", strerror(errno));
 		free(mntdata);
 		return 0;
 	}
 
 	free(mntdata);
 
-	INFO("mounted '%s' on '%s', with fstype '%s'",
+	INFO(conf, "mounted '%s' on '%s', with fstype '%s'",
 	     cbarg->rootfs, cbarg->target, fstype);
 
 	return 1;
 }
 
 static int mount_unknown_fs(const char *rootfs, const char *target,
-			                const char *options)
+			                const char *options, struct lxc_conf *conf)
 {
 	int i;
 
@@ -197,9 +197,9 @@ static int mount_unknown_fs(const char *rootfs, const char *target,
 		if (access(fsfile[i], F_OK))
 			continue;
 
-		ret = lxc_file_for_each_line(fsfile[i], find_fstype_cb, &cbarg);
+		ret = lxc_file_for_each_line(fsfile[i], find_fstype_cb, &cbarg, conf);
 		if (ret < 0) {
-			ERROR("failed to parse '%s'", fsfile[i]);
+			ERROR(conf, "failed to parse '%s'", fsfile[i]);
 			return -1;
 		}
 
@@ -207,7 +207,7 @@ static int mount_unknown_fs(const char *rootfs, const char *target,
 			return 0;
 	}
 
-	ERROR("failed to determine fs type for '%s'", rootfs);
+	ERROR(conf, "failed to determine fs type for '%s'", rootfs);
 	return -1;
 }
 
@@ -216,7 +216,6 @@ static int do_mkfs(const char *path, const char *fstype)
 	pid_t pid;
 
 	if ((pid = fork()) < 0) {
-		ERROR("error forking");
 		return -1;
 	}
 	if (pid > 0)
@@ -234,7 +233,7 @@ static int do_mkfs(const char *path, const char *fstype)
 	exit(1);
 }
 
-static char *linkderef(char *path, char *dest)
+static char *linkderef(struct lxc_conf *conf, char *path, char *dest)
 {
 	struct stat sbuf;
 	ssize_t ret;
@@ -246,10 +245,10 @@ static char *linkderef(char *path, char *dest)
 		return path;
 	ret = readlink(path, dest, MAXPATHLEN);
 	if (ret < 0) {
-		SYSERROR("error reading link %s", path);
+		SYSERROR(conf, "error reading link %s", path);
 		return NULL;
 	} else if (ret >= MAXPATHLEN) {
-		ERROR("link in %s too long", path);
+		ERROR(conf, "link in %s too long", path);
 		return NULL;
 	}
 	dest[ret] = '\0';
@@ -264,7 +263,7 @@ static char *linkderef(char *path, char *dest)
  * @len: length of passed in char*
  * Returns length of fstype, of -1 on error
  */
-static int detect_fs(struct bdev *bdev, char *type, int len)
+static int detect_fs(struct lxc_conf *c, struct bdev *bdev, char *type, int len)
 {
 	int  p[2], ret;
 	size_t linelen;
@@ -292,17 +291,17 @@ static int detect_fs(struct bdev *bdev, char *type, int len)
 		ret = read(p[0], type, len-1);
 		close(p[0]);
 		if (ret < 0) {
-			SYSERROR("error reading from pipe");
+			SYSERROR(c, "error reading from pipe");
 			wait(&status);
 			return -1;
 		} else if (ret == 0) {
-			ERROR("child exited early - fstype not found");
+			ERROR(c, "child exited early - fstype not found");
 			wait(&status);
 			return -1;
 		}
 		wait(&status);
 		type[len-1] = '\0';
-		INFO("detected fstype %s for %s", type, srcdev);
+		INFO(c, "detected fstype %s for %s", type, srcdev);
 		return ret;
 	}
 
@@ -311,19 +310,19 @@ static int detect_fs(struct bdev *bdev, char *type, int len)
 
 	if (detect_shared_rootfs()) {
 		if (mount(NULL, "/", NULL, MS_SLAVE|MS_REC, NULL)) {
-			SYSERROR("Failed to make / rslave");
-			ERROR("Continuing...");
+			SYSERROR(c, "Failed to make / rslave");
+			ERROR(c, "Continuing...");
 		}
 	}
 
-	ret = mount_unknown_fs(srcdev, bdev->dest, bdev->mntopts);
+	ret = mount_unknown_fs(srcdev, bdev->dest, bdev->mntopts, c);
 	if (ret < 0) {
-		ERROR("failed mounting %s onto %s to detect fstype", srcdev, bdev->dest);
+		ERROR(c, "failed mounting %s onto %s to detect fstype", srcdev, bdev->dest);
 		exit(1);
 	}
 	// if symlink, get the real dev name
 	char devpath[MAXPATHLEN];
-	char *l = linkderef(srcdev, devpath);
+	char *l = linkderef(c, srcdev, devpath);
 	if (!l)
 		exit(1);
 	f = fopen("/proc/self/mounts", "r");
@@ -452,7 +451,7 @@ static int dir_clonepaths(struct bdev *orig, struct bdev *new, const char *oldna
 	int len, ret;
 
 	if (snap) {
-		ERROR("directories cannot be snapshotted.  Try aufs or overlayfs.");
+		ERROR(conf, "directories cannot be snapshotted.  Try aufs or overlayfs.");
 		return -1;
 	}
 
@@ -474,7 +473,7 @@ static int dir_clonepaths(struct bdev *orig, struct bdev *new, const char *oldna
 
 static int dir_destroy(struct bdev *orig)
 {
-	if (lxc_rmdir_onedev(orig->src, NULL) < 0)
+	if (lxc_rmdir_onedev(bdev->conf, orig->src, NULL) < 0)
 		return -1;
 	return 0;
 }
@@ -488,16 +487,16 @@ static int dir_create(struct bdev *bdev, const char *dest, const char *n,
 		bdev->src = strdup(dest);
 	bdev->dest = strdup(dest);
 	if (!bdev->src || !bdev->dest) {
-		ERROR("Out of memory");
+		ERROR(bdev->conf, "Out of memory");
 		return -1;
 	}
 
 	if (mkdir_p(bdev->src, 0755) < 0) {
-		ERROR("Error creating %s", bdev->src);
+		ERROR(bdev->conf, "Error creating %s", bdev->src);
 		return -1;
 	}
 	if (mkdir_p(bdev->dest, 0755) < 0) {
-		ERROR("Error creating %s", bdev->dest);
+		ERROR(bdev->conf, "Error creating %s", bdev->dest);
 		return -1;
 	}
 
@@ -527,14 +526,14 @@ static const struct bdev_ops dir_ops = {
 // sake of flexibility let's always bind-mount.
 //
 
-static int zfs_list_entry(const char *path, char *output, size_t inlen)
+static int zfs_list_entry(struct lxc_conf *c, const char *path, char *output, size_t inlen)
 {
 	struct lxc_popen_FILE *f;
 	int found=0;
 
-	f = lxc_popen("zfs list 2> /dev/null");
+	f = lxc_popen(c, "zfs list 2> /dev/null");
 	if (f == NULL) {
-		SYSERROR("popen failed");
+		SYSERROR(c, "popen failed");
 		return 0;
 	}
 	while (fgets(output, inlen, f->f)) {
@@ -554,10 +553,9 @@ static int zfs_detect(const char *path)
 	int found;
 
 	if (!output) {
-		ERROR("out of memory");
 		return 0;
 	}
-	found = zfs_list_entry(path, output, LXC_LOG_BUFFER_SIZE);
+	found = zfs_list_entry(NULL, path, output, LXC_LOG_BUFFER_SIZE);
 	free(output);
 	return found;
 }
@@ -684,7 +682,7 @@ static int zfs_clonepaths(struct bdev *orig, struct bdev *new, const char *oldna
 		return -1;
 
 	if (snap && strcmp(orig->type, "zfs")) {
-		ERROR("zfs snapshot from %s backing store is not supported",
+		ERROR(conf, "zfs snapshot from %s backing store is not supported",
 			orig->type);
 		return -1;
 	}
@@ -718,7 +716,7 @@ static int zfs_destroy(struct bdev *orig)
 		return wait_for_pid(pid);
 
 	if (!zfs_list_entry(orig->src, output, MAXPATHLEN)) {
-		ERROR("Error: zfs entry for %s not found", orig->src);
+		ERROR(orig->conf, "Error: zfs entry for %s not found", orig->src);
 		return -1;
 	}
 
@@ -807,7 +805,6 @@ static int lvm_detect(const char *path)
 	ret = snprintf(devp, MAXPATHLEN, "/sys/dev/block/%d:%d/dm/uuid",
 			major(statbuf.st_rdev), minor(statbuf.st_rdev));
 	if (ret < 0 || ret >= MAXPATHLEN) {
-		ERROR("lvm uuid pathname too long");
 		return 0;
 	}
 	fout = fopen(devp, "r");
@@ -820,7 +817,7 @@ static int lvm_detect(const char *path)
 	return 1;
 }
 
-static int lvm_mount(struct bdev *bdev)
+static int lvm_mount(struct bdev *bdev, struct lxc_conf *c)
 {
 	if (strcmp(bdev->type, "lvm"))
 		return -22;
@@ -828,7 +825,7 @@ static int lvm_mount(struct bdev *bdev)
 		return -22;
 	/* if we might pass in data sometime, then we'll have to enrich
 	 * mount_unknown_fs */
-	return mount_unknown_fs(bdev->src, bdev->dest, bdev->mntopts);
+	return mount_unknown_fs(bdev->src, bdev->dest, bdev->mntopts, bdev->conf);
 }
 
 static int lvm_umount(struct bdev *bdev)
@@ -856,7 +853,6 @@ static int lvm_compare_lv_attr(const char *path, int pos, const char expected) {
 	f = lxc_popen(cmd);
 
 	if (f == NULL) {
-		SYSERROR("popen failed");
 		return -1;
 	}
 
@@ -895,13 +891,13 @@ static int lvm_is_thin_pool(const char *path)
  * a valid thin pool, and if so, we'll create the requested lv from that thin
  * pool.
  */
-static int do_lvm_create(const char *path, uint64_t size, const char *thinpool)
+static int do_lvm_create(struct lxc_conf *conf, const char *path, uint64_t size, const char *thinpool)
 {
 	int ret, pid, len;
 	char sz[24], *pathdup, *vg, *lv, *tp = NULL;
 
 	if ((pid = fork()) < 0) {
-		SYSERROR("failed fork");
+		SYSERROR(conf, "failed fork");
 		return -1;
 	}
 	if (pid > 0)
@@ -937,7 +933,7 @@ static int do_lvm_create(const char *path, uint64_t size, const char *thinpool)
 			exit(1);
 
 		ret = lvm_is_thin_pool(tp);
-		INFO("got %d for thin pool at path: %s", ret, tp);
+		INFO(conf, "got %d for thin pool at path: %s", ret, tp);
 		if (ret < 0)
 			exit(1);
 
@@ -950,17 +946,17 @@ static int do_lvm_create(const char *path, uint64_t size, const char *thinpool)
 	else
 	    execlp("lvcreate", "lvcreate", "--thinpool", tp, "-V", sz, vg, "-n", lv, (char *)NULL);
 
-	SYSERROR("execlp");
+	SYSERROR(conf, "execlp");
 	exit(1);
 }
 
-static int lvm_snapshot(const char *orig, const char *path, uint64_t size)
+static int lvm_snapshot(struct lxc_conf *conf, const char *orig, const char *path, uint64_t size)
 {
 	int ret, pid;
 	char sz[24], *pathdup, *lv;
 
 	if ((pid = fork()) < 0) {
-		SYSERROR("failed fork");
+		SYSERROR(conf, "failed fork");
 		return -1;
 	}
 	if (pid > 0)
@@ -1024,7 +1020,7 @@ static int lvm_clonepaths(struct bdev *orig, struct bdev *new, const char *oldna
 		const char *vg;
 
 		if (snap) {
-			ERROR("LVM snapshot from %s backing store is not supported",
+			ERROR(orig->conf, "LVM snapshot from %s backing store is not supported",
 				orig->type);
 			return -1;
 		}
@@ -1059,11 +1055,11 @@ static int lvm_clonepaths(struct bdev *orig, struct bdev *new, const char *oldna
 
 	if (is_blktype(orig)) {
 		if (!newsize && blk_getsize(orig, &size) < 0) {
-			ERROR("Error getting size of %s", orig->src);
+			ERROR(orig->conf, "Error getting size of %s", orig->src);
 			return -1;
 		}
-		if (detect_fs(orig, fstype, 100) < 0) {
-			INFO("could not find fstype for %s, using ext3", orig->src);
+		if (detect_fs(conf, orig, fstype, 100) < 0) {
+			INFO(orig->conf, "could not find fstype for %s, using ext3", orig->src);
 			return -1;
 		}
 	} else {
@@ -1073,17 +1069,17 @@ static int lvm_clonepaths(struct bdev *orig, struct bdev *new, const char *oldna
 	}
 
 	if (snap) {
-		if (lvm_snapshot(orig->src, new->src, size) < 0) {
-			ERROR("could not create %s snapshot of %s", new->src, orig->src);
+		if (lvm_snapshot(orig->conf, orig->src, new->src, size) < 0) {
+			ERROR(orig->conf, "could not create %s snapshot of %s", new->src, orig->src);
 			return -1;
 		}
 	} else {
-		if (do_lvm_create(new->src, size, lxc_global_config_value("lxc.bdev.lvm.thin_pool")) < 0) {
-			ERROR("Error creating new lvm blockdev");
+		if (do_lvm_create(orig->conf, new->src, size, lxc_global_config_value("lxc.bdev.lvm.thin_pool")) < 0) {
+			ERROR(orig->conf, "Error creating new lvm blockdev");
 			return -1;
 		}
 		if (do_mkfs(new->src, fstype) < 0) {
-			ERROR("Error creating filesystem type %s on %s", fstype,
+			ERROR(orig->conf, "Error creating filesystem type %s on %s", fstype,
 				new->src);
 			return -1;
 		}
@@ -1141,8 +1137,8 @@ static int lvm_create(struct bdev *bdev, const char *dest, const char *n,
 	if (!sz)
 		sz = DEFAULT_FS_SIZE;
 
-	if (do_lvm_create(bdev->src, sz, thinpool) < 0) {
-		ERROR("Error creating new lvm blockdev %s size %"PRIu64" bytes", bdev->src, sz);
+	if (do_lvm_create(bdev->conf, bdev->src, sz, thinpool) < 0) {
+		ERROR(bdev->conf, "Error creating new lvm blockdev %s size %"PRIu64" bytes", bdev->src, sz);
 		return -1;
 	}
 
@@ -1150,7 +1146,7 @@ static int lvm_create(struct bdev *bdev, const char *dest, const char *n,
 	if (!fstype)
 		fstype = DEFAULT_FSTYPE;
 	if (do_mkfs(bdev->src, fstype) < 0) {
-		ERROR("Error creating filesystem type %s on %s", fstype,
+		ERROR(bdev->conf, "Error creating filesystem type %s on %s", fstype,
 			bdev->src);
 		return -1;
 	}
@@ -1158,7 +1154,7 @@ static int lvm_create(struct bdev *bdev, const char *dest, const char *n,
 		return -1;
 
 	if (mkdir_p(bdev->dest, 0755) < 0) {
-		ERROR("Error creating %s", bdev->dest);
+		ERROR(bdev->conf, "Error creating %s", bdev->dest);
 		return -1;
 	}
 
@@ -1182,8 +1178,8 @@ static const struct bdev_ops lvm_ops = {
  * return a/b/c.  If instead objid is for /lxc/c1/rootfs/a, we will
  * simply return a.
  */
-char *get_btrfs_subvol_path(int fd, u64 dir_id, u64 objid,
-		char *name, int name_len)
+static char *get_btrfs_subvol_path(struct lxc_conf *c, int fd, u64 dir_id,
+		u64 objid, char *name, int name_len)
 {
 	struct btrfs_ioctl_ino_lookup_args args;
 	int ret, e;
@@ -1197,13 +1193,13 @@ char *get_btrfs_subvol_path(int fd, u64 dir_id, u64 objid,
 	ret = ioctl(fd, BTRFS_IOC_INO_LOOKUP, &args);
 	e = errno;
 	if (ret) {
-		ERROR("%s: ERROR: Failed to lookup path for %llu %llu %s - %s\n",
+		ERROR(c, "%s: ERROR: Failed to lookup path for %llu %llu %s - %s\n",
 				 __func__, (unsigned long long) dir_id,
 				 (unsigned long long) objid,
 				 name, strerror(e));
 		return NULL;
 	} else
-		INFO("%s: got path for %llu %llu - %s\n", __func__,
+		INFO(c, "%s: got path for %llu %llu - %s\n", __func__,
 			(unsigned long long) objid, (unsigned long long) dir_id,
 			name);
 
@@ -1235,7 +1231,7 @@ char *get_btrfs_subvol_path(int fd, u64 dir_id, u64 objid,
 // btrfs ops
 //
 
-int btrfs_list_get_path_rootid(int fd, u64 *treeid)
+int btrfs_list_get_path_rootid(struct lxc_conf *c, int fd, u64 *treeid)
 {
 	int  ret;
 	struct btrfs_ioctl_ino_lookup_args args;
@@ -1245,7 +1241,7 @@ int btrfs_list_get_path_rootid(int fd, u64 *treeid)
 
 	ret = ioctl(fd, BTRFS_IOC_INO_LOOKUP, &args);
 	if (ret < 0) {
-		WARN("Warning: can't perform the search -%s\n",
+		WARN(c, "Warning: can't perform the search -%s\n",
 				strerror(errno));
 		return ret;
 	}
@@ -1510,20 +1506,20 @@ static int btrfs_clonepaths(struct bdev *orig, struct bdev *new, const char *old
 	return btrfs_subvolume_create(new->dest);
 }
 
-static int btrfs_do_destroy_subvol(const char *path)
+static int btrfs_do_destroy_subvol(struct lxc_conf *c, const char *path)
 {
 	int ret, fd = -1;
 	struct btrfs_ioctl_vol_args  args;
 	char *p, *newfull = strdup(path);
 
 	if (!newfull) {
-		ERROR("Error: out of memory");
+		ERROR(c, "Error: out of memory");
 		return -1;
 	}
 
 	p = strrchr(newfull, '/');
 	if (!p) {
-		ERROR("bad path: %s", path);
+		ERROR(c, "bad path: %s", path);
 		free(newfull);
 		return -1;
 	}
@@ -1531,7 +1527,7 @@ static int btrfs_do_destroy_subvol(const char *path)
 
 	fd = open(newfull, O_RDONLY);
 	if (fd < 0) {
-		ERROR("Error opening %s", newfull);
+		ERROR(c, "Error opening %s", newfull);
 		free(newfull);
 		return -1;
 	}
@@ -1540,9 +1536,9 @@ static int btrfs_do_destroy_subvol(const char *path)
 	strncpy(args.name, p+1, BTRFS_SUBVOL_NAME_MAX);
 	args.name[BTRFS_SUBVOL_NAME_MAX-1] = 0;
 	ret = ioctl(fd, BTRFS_IOC_SNAP_DESTROY, &args);
-	INFO("btrfs: snapshot destroy ioctl returned %d for %s", ret, path);
+	INFO(c, "btrfs: snapshot destroy ioctl returned %d for %s", ret, path);
 	if (ret < 0 && errno == EPERM)
-		ERROR("Is the rootfs mounted with -o user_subvol_rm_allowed?");
+		ERROR(c, "Is the rootfs mounted with -o user_subvol_rm_allowed?");
 
 	free(newfull);
 	close(fd);
@@ -1662,8 +1658,8 @@ static void free_btrfs_tree(struct my_btrfs_tree *tree)
  * Given a @tree of subvolumes under @path, ask btrfs to remove each
  * subvolume
  */
-static bool do_remove_btrfs_children(struct my_btrfs_tree *tree, u64 root_id,
-		const char *path)
+static bool do_remove_btrfs_children(struct lxc_conf *c, struct my_btrfs_tree *tree,
+		u64 root_id, const char *path)
 {
 	int i;
 	char *newpath;
@@ -1672,23 +1668,23 @@ static bool do_remove_btrfs_children(struct my_btrfs_tree *tree, u64 root_id,
 	for (i = 0; i < tree->num; i++) {
 		if (tree->nodes[i].parentid == root_id) {
 			if (!tree->nodes[i].dirname) {
-				WARN("Odd condition: child objid with no name under %s\n", path);
+				WARN(c, "Odd condition: child objid with no name under %s\n", path);
 				continue;
 			}
 			len = strlen(path) + strlen(tree->nodes[i].dirname) + 2;
 			newpath = malloc(len);
 			if (!newpath) {
-				ERROR("Out of memory");
+				ERROR(c, "Out of memory");
 				return false;
 			}
 			snprintf(newpath, len, "%s/%s", path, tree->nodes[i].dirname);
-			if (!do_remove_btrfs_children(tree, tree->nodes[i].objid, newpath)) {
-				ERROR("Failed to prune %s\n", tree->nodes[i].name);
+			if (!do_remove_btrfs_children(c, tree, tree->nodes[i].objid, newpath)) {
+				ERROR(c, "Failed to prune %s\n", tree->nodes[i].name);
 				free(newpath);
 				return false;
 			}
-			if (btrfs_do_destroy_subvol(newpath) != 0) {
-				ERROR("Failed to remove %s\n", newpath);
+			if (btrfs_do_destroy_subvol(c, newpath) != 0) {
+				ERROR(c, "Failed to remove %s\n", newpath);
 				free(newpath);
 				return false;
 			}
@@ -1698,7 +1694,7 @@ static bool do_remove_btrfs_children(struct my_btrfs_tree *tree, u64 root_id,
 	return true;
 }
 
-static int btrfs_recursive_destroy(const char *path)
+static int btrfs_recursive_destroy(struct lxc_conf *c, const char *path)
 {
 	u64 root_id;
 	int fd;
@@ -1715,14 +1711,14 @@ static int btrfs_recursive_destroy(const char *path)
 
 	fd = open(path, O_RDONLY);
 	if (fd < 0) {
-		ERROR("Failed to open %s\n", path);
+		ERROR(c, "Failed to open %s\n", path);
 		return -1;
 	}
 
-	if (btrfs_list_get_path_rootid(fd, &root_id)) {
+	if (btrfs_list_get_path_rootid(c, fd, &root_id)) {
 		close(fd);
 		if (errno == EPERM || errno == EACCES) {
-			WARN("Will simply try removing");
+			WARN(c, "Will simply try removing");
 			goto ignore_search;
 		}
 
@@ -1731,7 +1727,7 @@ static int btrfs_recursive_destroy(const char *path)
 
 	tree = create_my_btrfs_tree(root_id, path, strlen(path));
 	if (!tree) {
-		ERROR("Out of memory\n");
+		ERROR(c, "Out of memory\n");
 		close(fd);
 		return -1;
 	}
@@ -1754,7 +1750,7 @@ static int btrfs_recursive_destroy(const char *path)
 		ret = ioctl(fd, BTRFS_IOC_TREE_SEARCH, &args);
 		if (ret < 0) {
 			close(fd);
-			ERROR("Error: can't perform the search under %s\n", path);
+			ERROR(c, "Error: can't perform the search under %s\n", path);
 			free_btrfs_tree(tree);
 			return -1;
 		}
@@ -1774,12 +1770,12 @@ static int btrfs_recursive_destroy(const char *path)
 				ref = (struct btrfs_root_ref *)(args.buf + off);
 				name_len = ref->name_len;
 				name = (char *)(ref + 1);
-				tmppath = get_btrfs_subvol_path(fd, sh->offset,
+				tmppath = get_btrfs_subvol_path(c, fd, sh->offset,
 						ref->dirid, name, name_len);
 				if (!add_btrfs_tree_node(tree, sh->objectid,
 							sh->offset, name,
 							name_len, tmppath)) {
-					ERROR("Out of memory");
+					ERROR(c, "Out of memory");
 					free_btrfs_tree(tree);
 					free(tmppath);
 					close(fd);
@@ -1817,16 +1813,16 @@ static int btrfs_recursive_destroy(const char *path)
 
 	/* now actually remove them */
 
-	if (!do_remove_btrfs_children(tree, root_id, path)) {
+	if (!do_remove_btrfs_children(c, tree, root_id, path)) {
 		free_btrfs_tree(tree);
-		ERROR("failed pruning\n");
+		ERROR(c, "failed pruning\n");
 		return -1;
 	}
 
 	free_btrfs_tree(tree);
 	/* All child subvols have been removed, now remove this one */
 ignore_search:
-	return btrfs_do_destroy_subvol(path);
+	return btrfs_do_destroy_subvol(c, path);
 }
 
 static int btrfs_destroy(struct bdev *orig)
@@ -2050,7 +2046,7 @@ static int loop_clonepaths(struct bdev *orig, struct bdev *new, const char *oldn
 			ERROR("Error getting size of %s", orig->src);
 			return -1;
 		}
-		if (detect_fs(orig, fstype, 100) < 0) {
+		if (detect_fs(conf, orig, fstype, 100) < 0) {
 			INFO("could not find fstype for %s, using %s", orig->src,
 				DEFAULT_FSTYPE);
 			return -1;

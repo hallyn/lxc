@@ -35,7 +35,7 @@
 
 lxc_log_define(lxc_parse, lxc);
 
-int lxc_file_for_each_line(const char *file, lxc_file_cb callback, void *data)
+int lxc_file_for_each_line(const char *file, lxc_file_cb callback, void *data, struct lxc_conf *c)
 {
 	FILE *f;
 	int err = 0;
@@ -44,17 +44,17 @@ int lxc_file_for_each_line(const char *file, lxc_file_cb callback, void *data)
 
 	f = fopen(file, "r");
 	if (!f) {
-		SYSERROR("failed to open %s", file);
+		SYSERROR(c, "failed to open %s", file);
 		return -1;
 	}
 
 	while (getline(&line, &len, f) != -1) {
-		err = callback(line, data);
+		err = callback(line, data, c);
 		if (err) {
 			// callback rv > 0 means stop here
 			// callback rv < 0 means error
 			if (err < 0)
-				ERROR("Failed to parse config: %s", line);
+				ERROR(c, "Failed to parse config: %s", line);
 			break;
 		}
 	}
