@@ -333,15 +333,51 @@ out:
 	return ret;
 }
 
-static bool lxcapi_is_defined(struct lxc_container *c)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_is_defined(c);
-	current_config = old;
-	return ret;
+#define WRAP_API(rettype, fnname)					\
+static rettype fnname(struct lxc_container *c)				\
+{									\
+	rettype ret;							\
+	struct lxc_conf *old = current_config;				\
+	current_config = c ? c->lxc_conf : NULL;			\
+	ret = do_##fnname(c);						\
+	current_config = old;						\
+	return ret;							\
 }
+
+#define WRAP_API_1(rettype, fnname, t1)					\
+static rettype fnname(struct lxc_container *c, t1 a1)			\
+{									\
+	rettype ret;							\
+	struct lxc_conf *old = current_config;				\
+	current_config = c ? c->lxc_conf : NULL;			\
+	ret = do_##fnname(c, a1);					\
+	current_config = old;						\
+	return ret;							\
+}
+
+#define WRAP_API_2(rettype, fnname, t1, t2)				\
+static rettype fnname(struct lxc_container *c, t1 a1, t2 a2)		\
+{									\
+	rettype ret;							\
+	struct lxc_conf *old = current_config;				\
+	current_config = c ? c->lxc_conf : NULL;			\
+	ret = do_##fnname(c, a1, a2);					\
+	current_config = old;						\
+	return ret;							\
+}
+
+#define WRAP_API_3(rettype, fnname, t1, t2, t3)				\
+static rettype fnname(struct lxc_container *c, t1 a1, t2 a2, t3 a3)	\
+{									\
+	rettype ret;							\
+	struct lxc_conf *old = current_config;				\
+	current_config = c ? c->lxc_conf : NULL;			\
+	ret = do_##fnname(c, a1, a2, a3);				\
+	current_config = old;						\
+	return ret;							\
+}
+
+WRAP_API(bool, lxcapi_is_defined)
 
 static const char *do_lxcapi_state(struct lxc_container *c)
 {
@@ -353,15 +389,7 @@ static const char *do_lxcapi_state(struct lxc_container *c)
 	return lxc_state2str(s);
 }
 
-static const char *lxcapi_state(struct lxc_container *c)
-{
-	const char *ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_state(c);
-	current_config = old;
-	return ret;
-}
+WRAP_API(const char *, lxcapi_state)
 
 static bool is_stopped(struct lxc_container *c)
 {
@@ -382,15 +410,7 @@ static bool do_lxcapi_is_running(struct lxc_container *c)
 	return true;
 }
 
-static bool lxcapi_is_running(struct lxc_container *c)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_is_running(c);
-	current_config = old;
-	return ret;
-}
+WRAP_API(bool, lxcapi_is_running)
 
 static bool do_lxcapi_freeze(struct lxc_container *c)
 {
@@ -404,15 +424,7 @@ static bool do_lxcapi_freeze(struct lxc_container *c)
 	return true;
 }
 
-static bool lxcapi_freeze(struct lxc_container *c)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_freeze(c);
-	current_config = old;
-	return ret;
-}
+WRAP_API(bool, lxcapi_freeze)
 
 static bool do_lxcapi_unfreeze(struct lxc_container *c)
 {
@@ -426,15 +438,7 @@ static bool do_lxcapi_unfreeze(struct lxc_container *c)
 	return true;
 }
 
-static bool lxcapi_unfreeze(struct lxc_container *c)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_unfreeze(c);
-	current_config = old;
-	return ret;
-}
+WRAP_API(bool, lxcapi_unfreeze)
 
 static int do_lxcapi_console_getfd(struct lxc_container *c, int *ttynum, int *masterfd)
 {
@@ -446,15 +450,7 @@ static int do_lxcapi_console_getfd(struct lxc_container *c, int *ttynum, int *ma
 	return ttyfd;
 }
 
-static int lxcapi_console_getfd(struct lxc_container *c, int *ttynum, int *masterfd)
-{
-	int ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_console_getfd(c, ttynum, masterfd);
-	current_config = old;
-	return ret;
-}
+WRAP_API_2(int, lxcapi_console_getfd, int *, int *)
 
 static int lxcapi_console(struct lxc_container *c, int ttynum, int stdinfd,
 			  int stdoutfd, int stderrfd, int escape)
@@ -475,15 +471,7 @@ static pid_t do_lxcapi_init_pid(struct lxc_container *c)
 	return lxc_cmd_get_init_pid(c->name, c->config_path);
 }
 
-static pid_t lxcapi_init_pid(struct lxc_container *c)
-{
-	pid_t ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_init_pid(c);
-	current_config = old;
-	return ret;
-}
+WRAP_API(pid_t, lxcapi_init_pid)
 
 static bool load_config_locked(struct lxc_container *c, const char *fname)
 {
@@ -533,15 +521,7 @@ static bool do_lxcapi_load_config(struct lxc_container *c, const char *alt_file)
 	return ret;
 }
 
-static bool lxcapi_load_config(struct lxc_container *c, const char *alt_file)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_load_config(c, alt_file);
-	current_config = old;
-	return ret;
-}
+WRAP_API_1(bool, lxcapi_load_config, const char *)
 
 static bool do_lxcapi_want_daemonize(struct lxc_container *c, bool state)
 {
@@ -556,15 +536,7 @@ static bool do_lxcapi_want_daemonize(struct lxc_container *c, bool state)
 	return true;
 }
 
-static bool lxcapi_want_daemonize(struct lxc_container *c, bool state)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_want_daemonize(c, state);
-	current_config = old;
-	return ret;
-}
+WRAP_API_1(bool, lxcapi_want_daemonize, bool)
 
 static bool do_lxcapi_want_close_all_fds(struct lxc_container *c, bool state)
 {
@@ -579,15 +551,7 @@ static bool do_lxcapi_want_close_all_fds(struct lxc_container *c, bool state)
 	return true;
 }
 
-static bool lxcapi_want_close_all_fds(struct lxc_container *c, bool state)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_want_close_all_fds(c, state);
-	current_config = old;
-	return ret;
-}
+WRAP_API_1(bool, lxcapi_want_close_all_fds, bool)
 
 static bool do_lxcapi_wait(struct lxc_container *c, const char *state, int timeout)
 {
@@ -600,16 +564,7 @@ static bool do_lxcapi_wait(struct lxc_container *c, const char *state, int timeo
 	return ret == 0;
 }
 
-static bool lxcapi_wait(struct lxc_container *c, const char *state, int timeout)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_wait(c, state, timeout);
-	current_config = old;
-	return ret;
-}
-
+WRAP_API_2(bool, lxcapi_wait, const char *, int)
 
 static bool do_wait_on_daemonized_start(struct lxc_container *c, int pid)
 {
@@ -626,15 +581,7 @@ static bool do_wait_on_daemonized_start(struct lxc_container *c, int pid)
 	return do_lxcapi_wait(c, "RUNNING", timeout);
 }
 
-static bool wait_on_daemonized_start(struct lxc_container *c, int pid)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_wait_on_daemonized_start(c, pid);
-	current_config = old;
-	return ret;
-}
+WRAP_API_1(bool, wait_on_daemonized_start, int)
 
 static bool am_single_threaded(void)
 {
@@ -898,15 +845,7 @@ static bool do_lxcapi_stop(struct lxc_container *c)
 	return ret == 0;
 }
 
-static bool lxcapi_stop(struct lxc_container *c)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_stop(c);
-	current_config = old;
-	return ret;
-}
+WRAP_API(bool, lxcapi_stop)
 
 static int do_create_container_dir(const char *path, struct lxc_conf *conf)
 {
@@ -1546,15 +1485,7 @@ static bool do_lxcapi_reboot(struct lxc_container *c)
 
 }
 
-static bool lxcapi_reboot(struct lxc_container *c)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_reboot(c);
-	current_config = old;
-	return ret;
-}
+WRAP_API(bool, lxcapi_reboot)
 
 static bool do_lxcapi_shutdown(struct lxc_container *c, int timeout)
 {
@@ -1577,15 +1508,7 @@ static bool do_lxcapi_shutdown(struct lxc_container *c, int timeout)
 	return retv;
 }
 
-static bool lxcapi_shutdown(struct lxc_container *c, int timeout)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_shutdown(c, timeout);
-	current_config = old;
-	return ret;
-}
+WRAP_API_1(bool, lxcapi_shutdown, int)
 
 static bool lxcapi_createl(struct lxc_container *c, const char *t,
 		const char *bdevtype, struct bdev_specs *specs, int flags, ...)
@@ -1649,15 +1572,7 @@ static bool do_lxcapi_clear_config_item(struct lxc_container *c, const char *key
 	return ret == 0;
 }
 
-static bool lxcapi_clear_config_item(struct lxc_container *c, const char *key)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_clear_config_item(c, key);
-	current_config = old;
-	return ret;
-}
+WRAP_API_1(bool, lxcapi_clear_config_item, const char *)
 
 static inline bool enter_net_ns(struct lxc_container *c)
 {
@@ -1828,15 +1743,7 @@ static char ** do_lxcapi_get_interfaces(struct lxc_container *c)
 	return interfaces;
 }
 
-static char** lxcapi_get_interfaces(struct lxc_container *c)
-{
-	char ** ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_get_interfaces(c);
-	current_config = old;
-	return ret;
-}
+WRAP_API(char **, lxcapi_get_interfaces)
 
 static char** do_lxcapi_get_ips(struct lxc_container *c, const char* interface, const char* family, int scope)
 {
@@ -1955,15 +1862,7 @@ static char** do_lxcapi_get_ips(struct lxc_container *c, const char* interface, 
 	return addresses;
 }
 
-static char** lxcapi_get_ips(struct lxc_container *c, const char* interface, const char* family, int scope)
-{
-	char **ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_get_ips(c, interface, family, scope);
-	current_config = old;
-	return ret;
-}
+WRAP_API_3(char **, lxcapi_get_ips, const char *, const char *, int)
 
 static int do_lxcapi_get_config_item(struct lxc_container *c, const char *key, char *retv, int inlen)
 {
@@ -1978,15 +1877,7 @@ static int do_lxcapi_get_config_item(struct lxc_container *c, const char *key, c
 	return ret;
 }
 
-static int lxcapi_get_config_item(struct lxc_container *c, const char *key, char *retv, int inlen)
-{
-	int ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_get_config_item(c, key, retv, inlen);
-	current_config = old;
-	return ret;
-}
+WRAP_API_3(int, lxcapi_get_config_item, const char *, char *, int)
 
 static char* do_lxcapi_get_running_config_item(struct lxc_container *c, const char *key)
 {
@@ -2001,15 +1892,7 @@ static char* do_lxcapi_get_running_config_item(struct lxc_container *c, const ch
 	return ret;
 }
 
-static char* lxcapi_get_running_config_item(struct lxc_container *c, const char *key)
-{
-	char *ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_get_running_config_item(c, key);
-	current_config = old;
-	return ret;
-}
+WRAP_API_1(char *, lxcapi_get_running_config_item, const char *)
 
 static int do_lxcapi_get_keys(struct lxc_container *c, const char *key, char *retv, int inlen)
 {
@@ -2031,15 +1914,7 @@ static int do_lxcapi_get_keys(struct lxc_container *c, const char *key, char *re
 	return ret;
 }
 
-static int lxcapi_get_keys(struct lxc_container *c, const char *key, char *retv, int inlen)
-{
-	int ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_get_keys(c, key, retv, inlen);
-	current_config = old;
-	return ret;
-}
+WRAP_API_3(int, lxcapi_get_keys, const char *, char *, int)
 
 static bool do_lxcapi_save_config(struct lxc_container *c, const char *alt_file)
 {
@@ -2094,15 +1969,7 @@ out:
 	return ret;
 }
 
-static bool lxcapi_save_config(struct lxc_container *c, const char *alt_file)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_load_config(c, alt_file);
-	current_config = old;
-	return ret;
-}
+WRAP_API_1(bool, lxcapi_save_config, const char *)
 
 static bool mod_rdep(struct lxc_container *c, bool inc)
 {
@@ -2352,15 +2219,7 @@ static bool do_lxcapi_destroy(struct lxc_container *c)
 	return container_destroy(c);
 }
 
-static bool lxcapi_destroy(struct lxc_container *c)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_destroy(c);
-	current_config = old;
-	return ret;
-}
+WRAP_API(bool, lxcapi_destroy)
 
 static bool do_lxcapi_destroy_with_snapshots(struct lxc_container *c)
 {
@@ -2373,15 +2232,7 @@ static bool do_lxcapi_destroy_with_snapshots(struct lxc_container *c)
 	return lxcapi_destroy(c);
 }
 
-static bool lxcapi_destroy_with_snapshots(struct lxc_container *c)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_destroy_with_snapshots(c);
-	current_config = old;
-	return ret;
-}
+WRAP_API(bool, lxcapi_destroy_with_snapshots)
 
 static bool set_config_item_locked(struct lxc_container *c, const char *key, const char *v)
 {
@@ -2415,15 +2266,7 @@ static bool do_lxcapi_set_config_item(struct lxc_container *c, const char *key, 
 	return b;
 }
 
-static bool lxcapi_set_config_item(struct lxc_container *c, const char *key, const char *v)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_set_config_item(c, key, v);
-	current_config = old;
-	return ret;
-}
+WRAP_API_2(bool, lxcapi_set_config_item, const char *, const char *)
 
 static char *lxcapi_config_file_name(struct lxc_container *c)
 {
@@ -2510,16 +2353,7 @@ err:
 	return b;
 }
 
-static bool lxcapi_set_config_path(struct lxc_container *c, const char *path)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_set_config_path(c, path);
-	current_config = old;
-	return ret;
-}
-
+WRAP_API_1(bool, lxcapi_set_config_path, const char *)
 
 static bool do_lxcapi_set_cgroup_item(struct lxc_container *c, const char *subsys, const char *value)
 {
@@ -2540,15 +2374,7 @@ static bool do_lxcapi_set_cgroup_item(struct lxc_container *c, const char *subsy
 	return ret == 0;
 }
 
-static bool lxcapi_set_cgroup_item(struct lxc_container *c, const char *subsys, const char *value)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_set_cgroup_item(c, subsys, value);
-	current_config = old;
-	return ret;
-}
+WRAP_API_2(bool, lxcapi_set_cgroup_item, const char *, const char *)
 
 static int do_lxcapi_get_cgroup_item(struct lxc_container *c, const char *subsys, char *retv, int inlen)
 {
@@ -2569,15 +2395,7 @@ static int do_lxcapi_get_cgroup_item(struct lxc_container *c, const char *subsys
 	return ret;
 }
 
-static int lxcapi_get_cgroup_item(struct lxc_container *c, const char *subsys, char *retv, int inlen)
-{
-	int ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_get_cgroup_item(c, subsys, retv, inlen);
-	current_config = old;
-	return ret;
-}
+WRAP_API_3(int, lxcapi_get_cgroup_item, const char *, char *, int)
 
 const char *lxc_get_global_config_item(const char *key)
 {
@@ -3172,15 +2990,7 @@ static bool do_lxcapi_rename(struct lxc_container *c, const char *newname)
 	return true;
 }
 
-static bool lxcapi_rename(struct lxc_container *c, const char *newname)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_rename(c,newname);
-	current_config = old;
-	return ret;
-}
+WRAP_API_1(bool, lxcapi_rename, const char *)
 
 static int lxcapi_attach(struct lxc_container *c, lxc_attach_exec_t exec_function, void *exec_payload, lxc_attach_options_t *options, pid_t *attached_process)
 {
@@ -3359,15 +3169,7 @@ static int do_lxcapi_snapshot(struct lxc_container *c, const char *commentfile)
 	return i;
 }
 
-static int lxcapi_snapshot(struct lxc_container *c, const char *commentfile)
-{
-	int ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_snapshot(c, commentfile);
-	current_config = old;
-	return ret;
-}
+WRAP_API_1(int, lxcapi_snapshot, const char *)
 
 static void lxcsnap_free(struct lxc_snapshot *s)
 {
@@ -3499,15 +3301,7 @@ out_free:
 	return -1;
 }
 
-static int lxcapi_snapshot_list(struct lxc_container *c, struct lxc_snapshot **ret_snaps)
-{
-	int ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_snapshot_list(c, ret_snaps);
-	current_config = old;
-	return ret;
-}
+WRAP_API_1(int, lxcapi_snapshot_list, struct lxc_snapshot **)
 
 static bool do_lxcapi_snapshot_restore(struct lxc_container *c, const char *snapname, const char *newname)
 {
@@ -3570,15 +3364,7 @@ static bool do_lxcapi_snapshot_restore(struct lxc_container *c, const char *snap
 	return b;
 }
 
-static bool lxcapi_snapshot_restore(struct lxc_container *c, const char *snapname, const char *newname)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_snapshot_restore(c, snapname, newname);
-	current_config = old;
-	return ret;
-}
+WRAP_API_2(bool, lxcapi_snapshot_restore, const char *, const char *)
 
 static bool do_snapshot_destroy(const char *snapname, const char *clonelxcpath)
 {
@@ -3648,15 +3434,7 @@ static bool do_lxcapi_snapshot_destroy(struct lxc_container *c, const char *snap
 	return do_snapshot_destroy(snapname, clonelxcpath);
 }
 
-static bool lxcapi_snapshot_destroy(struct lxc_container *c, const char *snapname)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_snapshot_destroy(c, snapname);
-	current_config = old;
-	return ret;
-}
+WRAP_API_1(bool, lxcapi_snapshot_destroy, const char *)
 
 static bool do_lxcapi_snapshot_destroy_all(struct lxc_container *c)
 {
@@ -3671,30 +3449,14 @@ static bool do_lxcapi_snapshot_destroy_all(struct lxc_container *c)
 	return remove_all_snapshots(clonelxcpath);
 }
 
-static bool lxcapi_snapshot_destroy_all(struct lxc_container *c)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_snapshot_destroy_all(c);
-	current_config = old;
-	return ret;
-}
+WRAP_API(bool, lxcapi_snapshot_destroy_all)
 
 static bool do_lxcapi_may_control(struct lxc_container *c)
 {
 	return lxc_try_cmd(c->name, c->config_path) == 0;
 }
 
-static bool lxcapi_may_control(struct lxc_container *c)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_may_control(c);
-	current_config = old;
-	return ret;
-}
+WRAP_API(bool, lxcapi_may_control)
 
 static bool do_add_remove_node(pid_t init_pid, const char *path, bool add,
 		struct stat *st)
@@ -3811,15 +3573,7 @@ static bool do_lxcapi_add_device_node(struct lxc_container *c, const char *src_p
 	return add_remove_device_node(c, src_path, dest_path, true);
 }
 
-static bool lxcapi_add_device_node(struct lxc_container *c, const char *src_path, const char *dest_path)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_add_device_node(c, src_path, dest_path);
-	current_config = old;
-	return ret;
-}
+WRAP_API_2(bool, lxcapi_add_device_node, const char *, const char *)
 
 static bool do_lxcapi_remove_device_node(struct lxc_container *c, const char *src_path, const char *dest_path)
 {
@@ -3830,15 +3584,7 @@ static bool do_lxcapi_remove_device_node(struct lxc_container *c, const char *sr
 	return add_remove_device_node(c, src_path, dest_path, false);
 }
 
-static bool lxcapi_remove_device_node(struct lxc_container *c, const char *src_path, const char *dest_path)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_remove_device_node(c, src_path, dest_path);
-	current_config = old;
-	return ret;
-}
+WRAP_API_2(bool, lxcapi_remove_device_node, const char *, const char *)
 
 static bool do_lxcapi_attach_interface(struct lxc_container *c, const char *ifname,
 				const char *dst_ifname)
@@ -3873,16 +3619,7 @@ err:
 	return false;
 }
 
-static bool lxcapi_attach_interface(struct lxc_container *c, const char *ifname,
-				const char *dst_ifname)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_attach_interface(c, ifname, dst_ifname);
-	current_config = old;
-	return ret;
-}
+WRAP_API_2(bool, lxcapi_attach_interface, const char *, const char *)
 
 static bool do_lxcapi_detach_interface(struct lxc_container *c, const char *ifname,
 					const char *dst_ifname)
@@ -3939,16 +3676,7 @@ static bool do_lxcapi_detach_interface(struct lxc_container *c, const char *ifna
 	return true;
 }
 
-static bool lxcapi_detach_interface(struct lxc_container *c, const char *ifname,
-					const char *dst_ifname)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_detach_interface(c, ifname, dst_ifname);
-	current_config = old;
-	return ret;
-}
+WRAP_API_2(bool, lxcapi_detach_interface, const char *, const char *)
 
 struct criu_opts {
 	/* The type of criu invocation, one of "dump" or "restore" */
@@ -4286,15 +4014,7 @@ static bool do_lxcapi_checkpoint(struct lxc_container *c, char *directory, bool 
 	}
 }
 
-static bool lxcapi_checkpoint(struct lxc_container *c, char *directory, bool stop, bool verbose)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_checkpoint(c, directory, stop, verbose);
-	current_config = old;
-	return ret;
-}
+WRAP_API_3(bool, lxcapi_checkpoint, char *, bool, bool)
 
 static bool restore_net_info(struct lxc_container *c)
 {
@@ -4452,15 +4172,7 @@ out_fini_handler:
 	return !has_error;
 }
 
-static bool lxcapi_restore(struct lxc_container *c, char *directory, bool verbose)
-{
-	bool ret;
-	struct lxc_conf *old = current_config;
-	current_config = c ? c->lxc_conf : NULL;
-	ret = do_lxcapi_restore(c, directory, verbose);
-	current_config = old;
-	return ret;
-}
+WRAP_API_2(bool, lxcapi_restore, char *, bool)
 
 static int lxcapi_attach_run_waitl(struct lxc_container *c, lxc_attach_options_t *options, const char *program, const char *arg, ...)
 {
