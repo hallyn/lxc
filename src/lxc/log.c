@@ -37,6 +37,7 @@
 #include "log.h"
 #include "caps.h"
 #include "utils.h"
+#include "conf.h"
 
 #define LXC_LOG_PREFIX_SIZE	32
 #define LXC_LOG_BUFFER_SIZE	512
@@ -101,8 +102,17 @@ static int log_append_logfile(const struct lxc_log_appender *appender,
 	char buffer[LXC_LOG_BUFFER_SIZE];
 	int n;
 	int ms;
+	int fd_to_use = -1;
 
-	if (lxc_log_fd == -1)
+#ifndef NO_LXC_CONF
+	if (current_config)
+		fd_to_use = current_config->logfd;
+#endif
+
+	if (fd_to_use == -1)
+		fd_to_use = lxc_log_fd;
+
+	if (fd_to_use == -1)
 		return 0;
 
 	ms = event->timestamp.tv_usec / 1000;
@@ -127,7 +137,7 @@ static int log_append_logfile(const struct lxc_log_appender *appender,
 
 	buffer[n] = '\n';
 
-	return write(lxc_log_fd, buffer, n + 1);
+	return write(fd_to_use, buffer, n + 1);
 }
 
 static struct lxc_log_appender log_appender_stderr = {
@@ -455,7 +465,7 @@ extern int lxc_log_set_file(char **dest, int *fd, const char *fname)
 
 	*fd = log_open(fname);
 	if (*fd == -1)
-		return errno;
+		return -errno;
 	return 0;
 }
 
