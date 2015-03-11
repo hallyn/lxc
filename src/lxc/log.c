@@ -72,8 +72,10 @@ void log_unlock(void)
 	unlock_mutex(&log_mutex);
 }
 
-int lxc_log_fd = 1;
-int lxc_quiet_specified = 0;
+int lxc_log_fd = -1;
+int lxc_quiet_specified;
+int lxc_log_use_global_fd;
+static int lxc_loglevel_specified;
 
 static char log_prefix[LXC_LOG_PREFIX_SIZE] = "lxc";
 static char *log_fname = NULL;
@@ -104,7 +106,7 @@ static int log_append_logfile(const struct lxc_log_appender *appender,
 	int fd_to_use = -1;
 
 #ifndef NO_LXC_CONF
-	if (current_config)
+	if (!lxc_log_use_global_fd && current_config)
 		fd_to_use = current_config->logfd;
 #endif
 
@@ -161,7 +163,7 @@ static struct lxc_log_category log_root = {
 struct lxc_log_category lxc_log_category_lxc = {
 	.name		= "lxc",
 	.priority	= LXC_LOG_PRIORITY_ERROR,
-	.appender	= &log_appender_stderr,
+	.appender	= &log_appender_logfile,
 	.parent		= &log_root
 };
 
@@ -350,10 +352,12 @@ extern int lxc_log_init(const char *name, const char *file,
 	if (priority)
 		lxc_priority = lxc_log_priority_to_int(priority);
 
-	lxc_log_category_lxc.priority = lxc_priority;
+	if (!lxc_loglevel_specified) {
+		lxc_log_category_lxc.priority = lxc_priority;
+		lxc_loglevel_specified = 1;
+	}
 
 	if (!lxc_quiet_specified) {
-		lxc_log_category_lxc.appender = &log_appender_logfile;
 		if (!quiet)
 			lxc_log_category_lxc.appender->next = &log_appender_stderr;
 	}
@@ -365,6 +369,7 @@ extern int lxc_log_init(const char *name, const char *file,
 		if (strcmp(file, "none") == 0)
 			return 0;
 		ret = __lxc_log_set_file(file, 1);
+		lxc_log_use_global_fd = 1;
 	} else {
 		/* if no name was specified, there nothing to do */
 		if (!name)
@@ -480,4 +485,6 @@ extern const char *lxc_log_get_prefix(void)
 
 extern void lxc_log_options_no_override()
 {
+	lxc_quiet_specified = 1;
+	lxc_loglevel_specified = 1;
 }

@@ -106,6 +106,10 @@ struct lxc_log_category {
 	const struct lxc_log_category	*parent;
 };
 
+#ifndef NO_LXC_CONF
+extern int lxc_log_use_global_fd;
+#endif
+
 /*
  * Returns true if the chained priority is equal to or higher than
  * given priority.
@@ -120,7 +124,8 @@ lxc_log_priority_is_enabled(const struct lxc_log_category* category,
 
 	int cmp_prio = category->priority;
 #ifndef NO_LXC_CONF
-	if (current_config && current_config->loglevel != LXC_LOG_PRIORITY_NOTSET)
+	if (!lxc_log_use_global_fd && current_config &&
+			current_config->loglevel != LXC_LOG_PRIORITY_NOTSET)
 		cmp_prio = current_config->loglevel;
 #endif
 
