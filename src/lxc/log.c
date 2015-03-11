@@ -444,16 +444,8 @@ extern bool lxc_log_has_valid_level(void)
  * happens after processing command line arguments, which override the .conf
  * settings.  So only set the file if previously unset.
  */
-extern int lxc_log_set_file(char **dest, int *fd, const char *fname)
+extern int lxc_log_set_file(int *fd, const char *fname)
 {
-	if (*dest) {
-		free(*dest);
-		*dest = NULL;
-	}
-
-	*dest = strdup(fname);
-	if (!*dest)
-		return -ENOMEM;
 	if (*fd != -1) {
 		close(*fd);
 		*fd = -1;

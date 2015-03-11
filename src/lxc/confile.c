@@ -1179,7 +1179,7 @@ static int config_logfile(const char *key, const char *value,
 	// actual current logging.
 	ret = config_path_item(&c->logfile, value);
 	if (ret == 0)
-		ret = lxc_log_set_file(&c->logfile, &c->logfd, c->logfile);
+		ret = lxc_log_set_file(&c->logfd, c->logfile);
 	return ret;
 }
 
