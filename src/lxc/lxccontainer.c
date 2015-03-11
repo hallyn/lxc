@@ -85,6 +85,15 @@ return -1;
 
 lxc_log_define(lxc_container, lxc);
 
+static bool do_lxcapi_destroy(struct lxc_container *c);
+static const char *lxcapi_get_config_path(struct lxc_container *c);
+#define do_lxcapi_get_config_path(c) lxcapi_get_config_path(c)
+static bool do_lxcapi_set_config_item(struct lxc_container *c, const char *key, const char *v);
+static bool container_destroy(struct lxc_container *c);
+static bool get_snappath_dir(struct lxc_container *c, char *snappath);
+static bool lxcapi_snapshot_destroy_all(struct lxc_container *c);
+static bool do_lxcapi_save_config(struct lxc_container *c, const char *alt_file);
+
 static bool config_file_exists(const char *lxcpath, const char *cname)
 {
 	/* $lxcpath + '/' + $cname + '/config' + \0 */
@@ -301,7 +310,7 @@ int lxc_container_put(struct lxc_container *c)
 	return 0;
 }
 
-static bool lxcapi_is_defined(struct lxc_container *c)
+static bool do_lxcapi_is_defined(struct lxc_container *c)
 {
 	struct stat statbuf;
 	bool ret = false;
@@ -324,7 +333,17 @@ out:
 	return ret;
 }
 
-static const char *lxcapi_state(struct lxc_container *c)
+static bool lxcapi_is_defined(struct lxc_container *c)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_is_defined(c);
+	current_config = old;
+	return ret;
+}
+
+static const char *do_lxcapi_state(struct lxc_container *c)
 {
 	lxc_state_t s;
 
@@ -334,6 +353,16 @@ static const char *lxcapi_state(struct lxc_container *c)
 	return lxc_state2str(s);
 }
 
+static const char *lxcapi_state(struct lxc_container *c)
+{
+	const char *ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_state(c);
+	current_config = old;
+	return ret;
+}
+
 static bool is_stopped(struct lxc_container *c)
 {
 	lxc_state_t s;
@@ -341,19 +370,29 @@ static bool is_stopped(struct lxc_container *c)
 	return (s == STOPPED);
 }
 
-static bool lxcapi_is_running(struct lxc_container *c)
+static bool do_lxcapi_is_running(struct lxc_container *c)
 {
 	const char *s;
 
 	if (!c)
 		return false;
-	s = lxcapi_state(c);
+	s = do_lxcapi_state(c);
 	if (!s || strcmp(s, "STOPPED") == 0)
 		return false;
 	return true;
 }
 
-static bool lxcapi_freeze(struct lxc_container *c)
+static bool lxcapi_is_running(struct lxc_container *c)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_is_running(c);
+	current_config = old;
+	return ret;
+}
+
+static bool do_lxcapi_freeze(struct lxc_container *c)
 {
 	int ret;
 	if (!c)
@@ -365,7 +404,17 @@ static bool lxcapi_freeze(struct lxc_container *c)
 	return true;
 }
 
-static bool lxcapi_unfreeze(struct lxc_container *c)
+static bool lxcapi_freeze(struct lxc_container *c)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_freeze(c);
+	current_config = old;
+	return ret;
+}
+
+static bool do_lxcapi_unfreeze(struct lxc_container *c)
 {
 	int ret;
 	if (!c)
@@ -377,7 +426,17 @@ static bool lxcapi_unfreeze(struct lxc_container *c)
 	return true;
 }
 
-static int lxcapi_console_getfd(struct lxc_container *c, int *ttynum, int *masterfd)
+static bool lxcapi_unfreeze(struct lxc_container *c)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_unfreeze(c);
+	current_config = old;
+	return ret;
+}
+
+static int do_lxcapi_console_getfd(struct lxc_container *c, int *ttynum, int *masterfd)
 {
 	int ttyfd;
 	if (!c)
@@ -387,18 +446,43 @@ static int lxcapi_console_getfd(struct lxc_container *c, int *ttynum, int *maste
 	return ttyfd;
 }
 
+static int lxcapi_console_getfd(struct lxc_container *c, int *ttynum, int *masterfd)
+{
+	int ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_console_getfd(c, ttynum, masterfd);
+	current_config = old;
+	return ret;
+}
+
 static int lxcapi_console(struct lxc_container *c, int ttynum, int stdinfd,
 			  int stdoutfd, int stderrfd, int escape)
 {
-	return lxc_console(c, ttynum, stdinfd, stdoutfd, stderrfd, escape);
+	int ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = lxc_console(c, ttynum, stdinfd, stdoutfd, stderrfd, escape);
+	current_config = old;
+	return ret;
 }
 
-static pid_t lxcapi_init_pid(struct lxc_container *c)
+static pid_t do_lxcapi_init_pid(struct lxc_container *c)
 {
 	if (!c)
 		return -1;
 
 	return lxc_cmd_get_init_pid(c->name, c->config_path);
+}
+
+static pid_t lxcapi_init_pid(struct lxc_container *c)
+{
+	pid_t ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_init_pid(c);
+	current_config = old;
+	return ret;
 }
 
 static bool load_config_locked(struct lxc_container *c, const char *fname)
@@ -412,7 +496,7 @@ static bool load_config_locked(struct lxc_container *c, const char *fname)
 	return true;
 }
 
-static bool lxcapi_load_config(struct lxc_container *c, const char *alt_file)
+static bool do_lxcapi_load_config(struct lxc_container *c, const char *alt_file)
 {
 	bool ret = false, need_disklock = false;
 	int lret;
@@ -449,7 +533,17 @@ static bool lxcapi_load_config(struct lxc_container *c, const char *alt_file)
 	return ret;
 }
 
-static bool lxcapi_want_daemonize(struct lxc_container *c, bool state)
+static bool lxcapi_load_config(struct lxc_container *c, const char *alt_file)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_load_config(c, alt_file);
+	current_config = old;
+	return ret;
+}
+
+static bool do_lxcapi_want_daemonize(struct lxc_container *c, bool state)
 {
 	if (!c || !c->lxc_conf)
 		return false;
@@ -462,7 +556,17 @@ static bool lxcapi_want_daemonize(struct lxc_container *c, bool state)
 	return true;
 }
 
-static bool lxcapi_want_close_all_fds(struct lxc_container *c, bool state)
+static bool lxcapi_want_daemonize(struct lxc_container *c, bool state)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_want_daemonize(c, state);
+	current_config = old;
+	return ret;
+}
+
+static bool do_lxcapi_want_close_all_fds(struct lxc_container *c, bool state)
 {
 	if (!c || !c->lxc_conf)
 		return false;
@@ -475,7 +579,17 @@ static bool lxcapi_want_close_all_fds(struct lxc_container *c, bool state)
 	return true;
 }
 
-static bool lxcapi_wait(struct lxc_container *c, const char *state, int timeout)
+static bool lxcapi_want_close_all_fds(struct lxc_container *c, bool state)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_want_close_all_fds(c, state);
+	current_config = old;
+	return ret;
+}
+
+static bool do_lxcapi_wait(struct lxc_container *c, const char *state, int timeout)
 {
 	int ret;
 
@@ -486,8 +600,18 @@ static bool lxcapi_wait(struct lxc_container *c, const char *state, int timeout)
 	return ret == 0;
 }
 
+static bool lxcapi_wait(struct lxc_container *c, const char *state, int timeout)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_wait(c, state, timeout);
+	current_config = old;
+	return ret;
+}
 
-static bool wait_on_daemonized_start(struct lxc_container *c, int pid)
+
+static bool do_wait_on_daemonized_start(struct lxc_container *c, int pid)
 {
 	/* we'll probably want to make this timeout configurable? */
 	int timeout = 5, ret, status;
@@ -499,7 +623,17 @@ static bool wait_on_daemonized_start(struct lxc_container *c, int pid)
 	ret = waitpid(pid, &status, 0);
 	if (ret == -1 || !WIFEXITED(status) || WEXITSTATUS(status) != 0)
 		DEBUG("failed waiting for first dual-fork child");
-	return lxcapi_wait(c, "RUNNING", timeout);
+	return do_lxcapi_wait(c, "RUNNING", timeout);
+}
+
+static bool wait_on_daemonized_start(struct lxc_container *c, int pid)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_wait_on_daemonized_start(c, pid);
+	current_config = old;
+	return ret;
 }
 
 static bool am_single_threaded(void)
@@ -534,7 +668,7 @@ static bool am_single_threaded(void)
  * I can't decide if it'd be more convenient for callers if we accept '...',
  * or a null-terminated array (i.e. execl vs execv)
  */
-static bool lxcapi_start(struct lxc_container *c, int useinit, char * const argv[])
+static bool do_lxcapi_start(struct lxc_container *c, int useinit, char * const argv[])
 {
 	int ret;
 	struct lxc_conf *conf;
@@ -559,7 +693,7 @@ static bool lxcapi_start(struct lxc_container *c, int useinit, char * const argv
 	}
 	if (ret == 2) {
 		ERROR("Error: %s creation was not completed", c->name);
-		c->destroy(c);
+		do_lxcapi_destroy(c);
 		return false;
 	} else if (ret == 1) {
 		ERROR("Error: creation of %s is ongoing", c->name);
@@ -702,6 +836,16 @@ out:
 		return (ret == 0 ? true : false);
 }
 
+static bool lxcapi_start(struct lxc_container *c, int useinit, char * const argv[])
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_start(c, useinit, argv);
+	current_config = old;
+	return ret;
+}
+
 /*
  * note there MUST be an ending NULL
  */
@@ -715,6 +859,9 @@ static bool lxcapi_startl(struct lxc_container *c, int useinit, ...)
 	if (!c)
 		return false;
 
+	struct lxc_conf *old = current_config;
+	current_config = c->lxc_conf;
+
 	va_start(ap, useinit);
 	inargs = lxc_va_arg_list_to_argv(ap, 0, 1);
 	va_end(ap);
@@ -725,7 +872,7 @@ static bool lxcapi_startl(struct lxc_container *c, int useinit, ...)
 	}
 
 	/* pass NULL if no arguments were supplied */
-	bret = lxcapi_start(c, useinit, *inargs ? inargs : NULL);
+	bret = do_lxcapi_start(c, useinit, *inargs ? inargs : NULL);
 
 out:
 	if (inargs) {
@@ -735,10 +882,11 @@ out:
 		free(inargs);
 	}
 
+	current_config = old;
 	return bret;
 }
 
-static bool lxcapi_stop(struct lxc_container *c)
+static bool do_lxcapi_stop(struct lxc_container *c)
 {
 	int ret;
 
@@ -748,6 +896,16 @@ static bool lxcapi_stop(struct lxc_container *c)
 	ret = lxc_cmd_stop(c->name, c->config_path);
 
 	return ret == 0;
+}
+
+static bool lxcapi_stop(struct lxc_container *c)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_stop(c);
+	current_config = old;
+	return ret;
 }
 
 static int do_create_container_dir(const char *path, struct lxc_conf *conf)
@@ -797,9 +955,6 @@ static bool create_container_dir(struct lxc_container *c)
 	return ret == 0;
 }
 
-static const char *lxcapi_get_config_path(struct lxc_container *c);
-static bool lxcapi_set_config_item(struct lxc_container *c, const char *key, const char *v);
-
 /*
  * do_bdev_create: thin wrapper around bdev_create().  Like bdev_create(),
  * it returns a mounted bdev on success, NULL on error.
@@ -819,7 +974,7 @@ static struct bdev *do_bdev_create(struct lxc_container *c, const char *type,
 		dest = alloca(len);
 		ret = snprintf(dest, len, "%s", rpath);
 	} else {
-		const char *lxcpath = lxcapi_get_config_path(c);
+		const char *lxcpath = do_lxcapi_get_config_path(c);
 		len = strlen(c->name) + strlen(lxcpath) + 9;
 		dest = alloca(len);
 		ret = snprintf(dest, len, "%s/%s/rootfs", lxcpath, c->name);
@@ -833,7 +988,7 @@ static struct bdev *do_bdev_create(struct lxc_container *c, const char *type,
 		return NULL;
 	}
 
-	lxcapi_set_config_item(c, "lxc.rootfs", bdev->src);
+	do_lxcapi_set_config_item(c, "lxc.rootfs", bdev->src);
 
 	/* if we are not root, chown the rootfs dir to root in the
 	 * target uidmap */
@@ -1210,9 +1365,8 @@ static void lxcapi_clear_config(struct lxc_container *c)
 	}
 }
 
-static bool lxcapi_destroy(struct lxc_container *c);
-static bool container_destroy(struct lxc_container *c);
-static bool get_snappath_dir(struct lxc_container *c, char *snappath);
+#define do_lxcapi_clear_config(c) lxcapi_clear_config(c)
+
 /*
  * lxcapi_create:
  * create a container with the given parameters.
@@ -1227,7 +1381,7 @@ static bool get_snappath_dir(struct lxc_container *c, char *snappath);
  * @argv: the arguments to pass to the template, terminated by NULL.  If no
  * arguments, you can just pass NULL.
  */
-static bool lxcapi_create(struct lxc_container *c, const char *t,
+static bool do_lxcapi_create(struct lxc_container *c, const char *t,
 		const char *bdevtype, struct bdev_specs *specs, int flags,
 		char *const argv[])
 {
@@ -1253,14 +1407,14 @@ static bool lxcapi_create(struct lxc_container *c, const char *t,
 	 * an existing container.  Return an error, but do NOT delete the
 	 * container.
 	 */
-	if (lxcapi_is_defined(c) && c->lxc_conf && c->lxc_conf->rootfs.path &&
+	if (do_lxcapi_is_defined(c) && c->lxc_conf && c->lxc_conf->rootfs.path &&
 			access(c->lxc_conf->rootfs.path, F_OK) == 0 && tpath) {
 		ERROR("Container %s:%s already exists", c->config_path, c->name);
 		goto free_tpath;
 	}
 
 	if (!c->lxc_conf) {
-		if (!c->load_config(c, lxc_global_config_value("lxc.default_config"))) {
+		if (!do_lxcapi_load_config(c, lxc_global_config_value("lxc.default_config"))) {
 			ERROR("Error loading default configuration file %s", lxc_global_config_value("lxc.default_config"));
 			goto free_tpath;
 		}
@@ -1280,7 +1434,7 @@ static bool lxcapi_create(struct lxc_container *c, const char *t,
 	if (c->lxc_conf->rootfs.path && access(c->lxc_conf->rootfs.path, F_OK) != 0)
 		/* rootfs passed into configuration, but does not exist: error */
 		goto out;
-	if (lxcapi_is_defined(c) && c->lxc_conf->rootfs.path && !tpath) {
+	if (do_lxcapi_is_defined(c) && c->lxc_conf->rootfs.path && !tpath) {
 		/* Rootfs already existed, user just wanted to save the
 		 * loaded configuration */
 		ret = true;
@@ -1316,7 +1470,7 @@ static bool lxcapi_create(struct lxc_container *c, const char *t,
 		}
 
 		/* save config file again to store the new rootfs location */
-		if (!c->save_config(c, NULL)) {
+		if (!do_lxcapi_save_config(c, NULL)) {
 			ERROR("failed to save starting configuration for %s", c->name);
 			// parent task won't see bdev in config so we delete it
 			bdev->ops->umount(bdev);
@@ -1339,7 +1493,7 @@ static bool lxcapi_create(struct lxc_container *c, const char *t,
 
 	// now clear out the lxc_conf we have, reload from the created
 	// container
-	lxcapi_clear_config(c);
+	do_lxcapi_clear_config(c);
 
 	if (t) {
 		if (!prepend_lxc_header(c->configfile, tpath, argv)) {
@@ -1360,16 +1514,28 @@ free_tpath:
 	return ret;
 }
 
-static bool lxcapi_reboot(struct lxc_container *c)
+static bool lxcapi_create(struct lxc_container *c, const char *t,
+		const char *bdevtype, struct bdev_specs *specs, int flags,
+		char *const argv[])
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_create(c, t, bdevtype, specs, flags, argv);
+	current_config = old;
+	return ret;
+}
+
+static bool do_lxcapi_reboot(struct lxc_container *c)
 {
 	pid_t pid;
 	int rebootsignal = SIGINT;
 
 	if (!c)
 		return false;
-	if (!c->is_running(c))
+	if (!do_lxcapi_is_running(c))
 		return false;
-	pid = c->init_pid(c);
+	pid = do_lxcapi_init_pid(c);
 	if (pid <= 0)
 		return false;
 	if (c->lxc_conf && c->lxc_conf->rebootsignal)
@@ -1380,7 +1546,17 @@ static bool lxcapi_reboot(struct lxc_container *c)
 
 }
 
-static bool lxcapi_shutdown(struct lxc_container *c, int timeout)
+static bool lxcapi_reboot(struct lxc_container *c)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_reboot(c);
+	current_config = old;
+	return ret;
+}
+
+static bool do_lxcapi_shutdown(struct lxc_container *c, int timeout)
 {
 	bool retv;
 	pid_t pid;
@@ -1389,16 +1565,26 @@ static bool lxcapi_shutdown(struct lxc_container *c, int timeout)
 	if (!c)
 		return false;
 
-	if (!c->is_running(c))
+	if (!do_lxcapi_is_running(c))
 		return true;
-	pid = c->init_pid(c);
+	pid = do_lxcapi_init_pid(c);
 	if (pid <= 0)
 		return true;
 	if (c->lxc_conf && c->lxc_conf->haltsignal)
 		haltsignal = c->lxc_conf->haltsignal;
 	kill(pid, haltsignal);
-	retv = c->wait(c, "STOPPED", timeout);
+	retv = do_lxcapi_wait(c, "STOPPED", timeout);
 	return retv;
+}
+
+static bool lxcapi_shutdown(struct lxc_container *c, int timeout)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_shutdown(c, timeout);
+	current_config = old;
+	return ret;
 }
 
 static bool lxcapi_createl(struct lxc_container *c, const char *t,
@@ -1410,6 +1596,9 @@ static bool lxcapi_createl(struct lxc_container *c, const char *t,
 
 	if (!c)
 		return false;
+
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
 
 	/*
 	 * since we're going to wait for create to finish, I don't think we
@@ -1423,10 +1612,11 @@ static bool lxcapi_createl(struct lxc_container *c, const char *t,
 		goto out;
 	}
 
-	bret = c->create(c, t, bdevtype, specs, flags, args);
+	bret = do_lxcapi_create(c, t, bdevtype, specs, flags, args);
 
 out:
 	free(args);
+	current_config = old;
 	return bret;
 }
 
@@ -1444,7 +1634,7 @@ static void do_clear_unexp_config_line(struct lxc_conf *conf, const char *key)
 		WARN("Error clearing configuration for %s", key);
 }
 
-static bool lxcapi_clear_config_item(struct lxc_container *c, const char *key)
+static bool do_lxcapi_clear_config_item(struct lxc_container *c, const char *key)
 {
 	int ret;
 
@@ -1459,9 +1649,19 @@ static bool lxcapi_clear_config_item(struct lxc_container *c, const char *key)
 	return ret == 0;
 }
 
+static bool lxcapi_clear_config_item(struct lxc_container *c, const char *key)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_clear_config_item(c, key);
+	current_config = old;
+	return ret;
+}
+
 static inline bool enter_net_ns(struct lxc_container *c)
 {
-	pid_t pid = c->init_pid(c);
+	pid_t pid = do_lxcapi_init_pid(c);
 
 	if ((geteuid() != 0 || (c->lxc_conf && !lxc_list_empty(&c->lxc_conf->id_map))) && access("/proc/self/ns/user", F_OK) == 0) {
 		if (!switch_to_ns(pid, "user"))
@@ -1541,7 +1741,7 @@ static bool remove_from_array(char ***names, char *cname, int size)
 	return false;
 }
 
-static char** lxcapi_get_interfaces(struct lxc_container *c)
+static char ** do_lxcapi_get_interfaces(struct lxc_container *c)
 {
 	pid_t pid;
 	int i, count = 0, pipefd[2];
@@ -1628,7 +1828,17 @@ static char** lxcapi_get_interfaces(struct lxc_container *c)
 	return interfaces;
 }
 
-static char** lxcapi_get_ips(struct lxc_container *c, const char* interface, const char* family, int scope)
+static char** lxcapi_get_interfaces(struct lxc_container *c)
+{
+	char ** ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_get_interfaces(c);
+	current_config = old;
+	return ret;
+}
+
+static char** do_lxcapi_get_ips(struct lxc_container *c, const char* interface, const char* family, int scope)
 {
 	pid_t pid;
 	int i, count = 0, pipefd[2];
@@ -1745,7 +1955,17 @@ static char** lxcapi_get_ips(struct lxc_container *c, const char* interface, con
 	return addresses;
 }
 
-static int lxcapi_get_config_item(struct lxc_container *c, const char *key, char *retv, int inlen)
+static char** lxcapi_get_ips(struct lxc_container *c, const char* interface, const char* family, int scope)
+{
+	char **ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_get_ips(c, interface, family, scope);
+	current_config = old;
+	return ret;
+}
+
+static int do_lxcapi_get_config_item(struct lxc_container *c, const char *key, char *retv, int inlen)
 {
 	int ret;
 
@@ -1758,7 +1978,17 @@ static int lxcapi_get_config_item(struct lxc_container *c, const char *key, char
 	return ret;
 }
 
-static char* lxcapi_get_running_config_item(struct lxc_container *c, const char *key)
+static int lxcapi_get_config_item(struct lxc_container *c, const char *key, char *retv, int inlen)
+{
+	int ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_get_config_item(c, key, retv, inlen);
+	current_config = old;
+	return ret;
+}
+
+static char* do_lxcapi_get_running_config_item(struct lxc_container *c, const char *key)
 {
 	char *ret;
 
@@ -1766,12 +1996,22 @@ static char* lxcapi_get_running_config_item(struct lxc_container *c, const char 
 		return NULL;
 	if (container_mem_lock(c))
 		return NULL;
-	ret = lxc_cmd_get_config_item(c->name, key, c->get_config_path(c));
+	ret = lxc_cmd_get_config_item(c->name, key, do_lxcapi_get_config_path(c));
 	container_mem_unlock(c);
 	return ret;
 }
 
-static int lxcapi_get_keys(struct lxc_container *c, const char *key, char *retv, int inlen)
+static char* lxcapi_get_running_config_item(struct lxc_container *c, const char *key)
+{
+	char *ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_get_running_config_item(c, key);
+	current_config = old;
+	return ret;
+}
+
+static int do_lxcapi_get_keys(struct lxc_container *c, const char *key, char *retv, int inlen)
 {
 	if (!key)
 		return lxc_listconfigs(retv, inlen);
@@ -1791,7 +2031,17 @@ static int lxcapi_get_keys(struct lxc_container *c, const char *key, char *retv,
 	return ret;
 }
 
-static bool lxcapi_save_config(struct lxc_container *c, const char *alt_file)
+static int lxcapi_get_keys(struct lxc_container *c, const char *key, char *retv, int inlen)
+{
+	int ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_get_keys(c, key, retv, inlen);
+	current_config = old;
+	return ret;
+}
+
+static bool do_lxcapi_save_config(struct lxc_container *c, const char *alt_file)
 {
 	FILE *fout;
 	bool ret = false, need_disklock = false;
@@ -1804,7 +2054,7 @@ static bool lxcapi_save_config(struct lxc_container *c, const char *alt_file)
 
 	// If we haven't yet loaded a config, load the stock config
 	if (!c->lxc_conf) {
-		if (!c->load_config(c, lxc_global_config_value("lxc.default_config"))) {
+		if (!do_lxcapi_load_config(c, lxc_global_config_value("lxc.default_config"))) {
 			ERROR("Error loading default configuration file %s while saving %s", lxc_global_config_value("lxc.default_config"), c->name);
 			return false;
 		}
@@ -1841,6 +2091,16 @@ out:
 		container_disk_unlock(c);
 	else
 		container_mem_unlock(c);
+	return ret;
+}
+
+static bool lxcapi_save_config(struct lxc_container *c, const char *alt_file)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_load_config(c, alt_file);
+	current_config = old;
 	return ret;
 }
 
@@ -2032,7 +2292,7 @@ static bool container_destroy(struct lxc_container *c)
 	bool bret = false;
 	int ret;
 
-	if (!c || !lxcapi_is_defined(c))
+	if (!c || !do_lxcapi_is_defined(c))
 		return false;
 
 	if (container_disk_lock(c))
@@ -2057,7 +2317,7 @@ static bool container_destroy(struct lxc_container *c)
 
 	mod_all_rdeps(c, false);
 
-	const char *p1 = lxcapi_get_config_path(c);
+	const char *p1 = do_lxcapi_get_config_path(c);
 	char *path = alloca(strlen(p1) + strlen(c->name) + 2);
 	sprintf(path, "%s/%s", p1, c->name);
 	if (am_unpriv())
@@ -2075,7 +2335,7 @@ out:
 	return bret;
 }
 
-static bool lxcapi_destroy(struct lxc_container *c)
+static bool do_lxcapi_destroy(struct lxc_container *c)
 {
 	if (!c || !lxcapi_is_defined(c))
 		return false;
@@ -2092,9 +2352,17 @@ static bool lxcapi_destroy(struct lxc_container *c)
 	return container_destroy(c);
 }
 
-static bool lxcapi_snapshot_destroy_all(struct lxc_container *c);
+static bool lxcapi_destroy(struct lxc_container *c)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_destroy(c);
+	current_config = old;
+	return ret;
+}
 
-static bool lxcapi_destroy_with_snapshots(struct lxc_container *c)
+static bool do_lxcapi_destroy_with_snapshots(struct lxc_container *c)
 {
 	if (!c || !lxcapi_is_defined(c))
 		return false;
@@ -2103,6 +2371,16 @@ static bool lxcapi_destroy_with_snapshots(struct lxc_container *c)
 		return false;
 	}
 	return lxcapi_destroy(c);
+}
+
+static bool lxcapi_destroy_with_snapshots(struct lxc_container *c)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_destroy_with_snapshots(c);
+	current_config = old;
+	return ret;
 }
 
 static bool set_config_item_locked(struct lxc_container *c, const char *key, const char *v)
@@ -2121,7 +2399,7 @@ static bool set_config_item_locked(struct lxc_container *c, const char *key, con
 	return do_append_unexp_config_line(c->lxc_conf, key, v);
 }
 
-static bool lxcapi_set_config_item(struct lxc_container *c, const char *key, const char *v)
+static bool do_lxcapi_set_config_item(struct lxc_container *c, const char *key, const char *v)
 {
 	bool b = false;
 
@@ -2135,6 +2413,16 @@ static bool lxcapi_set_config_item(struct lxc_container *c, const char *key, con
 
 	container_mem_unlock(c);
 	return b;
+}
+
+static bool lxcapi_set_config_item(struct lxc_container *c, const char *key, const char *v)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_set_config_item(c, key, v);
+	current_config = old;
+	return ret;
 }
 
 static char *lxcapi_config_file_name(struct lxc_container *c)
@@ -2184,7 +2472,7 @@ static bool set_config_filename(struct lxc_container *c)
 	return true;
 }
 
-static bool lxcapi_set_config_path(struct lxc_container *c, const char *path)
+static bool do_lxcapi_set_config_path(struct lxc_container *c, const char *path)
 {
 	char *p;
 	bool b = false;
@@ -2222,8 +2510,18 @@ err:
 	return b;
 }
 
+static bool lxcapi_set_config_path(struct lxc_container *c, const char *path)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_set_config_path(c, path);
+	current_config = old;
+	return ret;
+}
 
-static bool lxcapi_set_cgroup_item(struct lxc_container *c, const char *subsys, const char *value)
+
+static bool do_lxcapi_set_cgroup_item(struct lxc_container *c, const char *subsys, const char *value)
 {
 	int ret;
 
@@ -2242,7 +2540,17 @@ static bool lxcapi_set_cgroup_item(struct lxc_container *c, const char *subsys, 
 	return ret == 0;
 }
 
-static int lxcapi_get_cgroup_item(struct lxc_container *c, const char *subsys, char *retv, int inlen)
+static bool lxcapi_set_cgroup_item(struct lxc_container *c, const char *subsys, const char *value)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_set_cgroup_item(c, subsys, value);
+	current_config = old;
+	return ret;
+}
+
+static int do_lxcapi_get_cgroup_item(struct lxc_container *c, const char *subsys, char *retv, int inlen)
 {
 	int ret;
 
@@ -2258,6 +2566,16 @@ static int lxcapi_get_cgroup_item(struct lxc_container *c, const char *subsys, c
 	ret = lxc_cgroup_get(subsys, retv, inlen, c->name, c->config_path);
 
 	container_disk_unlock(c);
+	return ret;
+}
+
+static int lxcapi_get_cgroup_item(struct lxc_container *c, const char *subsys, char *retv, int inlen)
+{
+	int ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_get_cgroup_item(c, subsys, retv, inlen);
+	current_config = old;
 	return ret;
 }
 
@@ -2377,7 +2695,7 @@ static int copyhooks(struct lxc_container *oldc, struct lxc_container *c)
 		ERROR("Error saving new hooks in clone");
 		return -1;
 	}
-	c->save_config(c, NULL);
+	do_lxcapi_save_config(c, NULL);
 	return 0;
 }
 
@@ -2649,7 +2967,7 @@ static int create_file_dirname(char *path, struct lxc_conf *conf)
 	return ret;
 }
 
-static struct lxc_container *lxcapi_clone(struct lxc_container *c, const char *newname,
+static struct lxc_container *do_lxcapi_clone(struct lxc_container *c, const char *newname,
 		const char *lxcpath, int flags,
 		const char *bdevtype, const char *bdevdata, uint64_t newsize,
 		char **hookargs)
@@ -2662,7 +2980,7 @@ static struct lxc_container *lxcapi_clone(struct lxc_container *c, const char *n
 	FILE *fout;
 	pid_t pid;
 
-	if (!c || !c->is_defined(c))
+	if (!c || !do_lxcapi_is_defined(c))
 		return NULL;
 
 	if (container_mem_lock(c))
@@ -2677,7 +2995,7 @@ static struct lxc_container *lxcapi_clone(struct lxc_container *c, const char *n
 	if (!newname)
 		newname = c->name;
 	if (!lxcpath)
-		lxcpath = c->get_config_path(c);
+		lxcpath = do_lxcapi_get_config_path(c);
 	ret = snprintf(newpath, MAXPATHLEN, "%s/%s/config", lxcpath, newname);
 	if (ret < 0 || ret >= MAXPATHLEN) {
 		SYSERROR("clone: failed making config pathname");
@@ -2806,7 +3124,20 @@ out:
 	return NULL;
 }
 
-static bool lxcapi_rename(struct lxc_container *c, const char *newname)
+static struct lxc_container *lxcapi_clone(struct lxc_container *c, const char *newname,
+		const char *lxcpath, int flags,
+		const char *bdevtype, const char *bdevdata, uint64_t newsize,
+		char **hookargs)
+{
+	struct lxc_container * ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_clone(c, newname, lxcpath, flags, bdevtype, bdevdata, newsize, hookargs);
+	current_config = old;
+	return ret;
+}
+
+static bool do_lxcapi_rename(struct lxc_container *c, const char *newname)
 {
 	struct bdev *bdev;
 	struct lxc_container *newc;
@@ -2841,15 +3172,32 @@ static bool lxcapi_rename(struct lxc_container *c, const char *newname)
 	return true;
 }
 
+static bool lxcapi_rename(struct lxc_container *c, const char *newname)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_rename(c,newname);
+	current_config = old;
+	return ret;
+}
+
 static int lxcapi_attach(struct lxc_container *c, lxc_attach_exec_t exec_function, void *exec_payload, lxc_attach_options_t *options, pid_t *attached_process)
 {
+	struct lxc_conf *old = current_config;
+	int ret;
+
 	if (!c)
 		return -1;
 
-	return lxc_attach(c->name, c->config_path, exec_function, exec_payload, options, attached_process);
+	current_config = c->lxc_conf;
+
+	ret = lxc_attach(c->name, c->config_path, exec_function, exec_payload, options, attached_process);
+	current_config = old;
+	return ret;
 }
 
-static int lxcapi_attach_run_wait(struct lxc_container *c, lxc_attach_options_t *options, const char *program, const char * const argv[])
+static int do_lxcapi_attach_run_wait(struct lxc_container *c, lxc_attach_options_t *options, const char *program, const char * const argv[])
 {
 	lxc_attach_command_t command;
 	pid_t pid;
@@ -2866,6 +3214,16 @@ static int lxcapi_attach_run_wait(struct lxc_container *c, lxc_attach_options_t 
 		return r;
 	}
 	return lxc_wait_for_pid_status(pid);
+}
+
+static int lxcapi_attach_run_wait(struct lxc_container *c, lxc_attach_options_t *options, const char *program, const char * const argv[])
+{
+	int ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_attach_run_wait(c, options, program, argv);
+	current_config = old;
+	return ret;
 }
 
 static int get_next_index(const char *lxcpath, char *cname)
@@ -2911,7 +3269,7 @@ static bool get_snappath_dir(struct lxc_container *c, char *snappath)
 	return true;
 }
 
-static int lxcapi_snapshot(struct lxc_container *c, const char *commentfile)
+static int do_lxcapi_snapshot(struct lxc_container *c, const char *commentfile)
 {
 	int i, flags, ret;
 	struct lxc_container *c2;
@@ -2953,7 +3311,7 @@ static int lxcapi_snapshot(struct lxc_container *c, const char *commentfile)
 		ERROR("and keep the original container pristine.");
 		flags &= ~LXC_CLONE_SNAPSHOT | LXC_CLONE_MAYBE_SNAPSHOT;
 	}
-	c2 = c->clone(c, newname, snappath, flags, NULL, NULL, 0, NULL);
+	c2 = do_lxcapi_clone(c, newname, snappath, flags, NULL, NULL, 0, NULL);
 	if (!c2) {
 		ERROR("clone of %s:%s failed", c->config_path, c->name);
 		return -1;
@@ -2999,6 +3357,16 @@ static int lxcapi_snapshot(struct lxc_container *c, const char *commentfile)
 	}
 
 	return i;
+}
+
+static int lxcapi_snapshot(struct lxc_container *c, const char *commentfile)
+{
+	int ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_snapshot(c, commentfile);
+	current_config = old;
+	return ret;
 }
 
 static void lxcsnap_free(struct lxc_snapshot *s)
@@ -3055,7 +3423,7 @@ static char *get_timestamp(char* snappath, char *name)
 	return s;
 }
 
-static int lxcapi_snapshot_list(struct lxc_container *c, struct lxc_snapshot **ret_snaps)
+static int do_lxcapi_snapshot_list(struct lxc_container *c, struct lxc_snapshot **ret_snaps)
 {
 	char snappath[MAXPATHLEN], path2[MAXPATHLEN];
 	int count = 0, ret;
@@ -3131,7 +3499,17 @@ out_free:
 	return -1;
 }
 
-static bool lxcapi_snapshot_restore(struct lxc_container *c, const char *snapname, const char *newname)
+static int lxcapi_snapshot_list(struct lxc_container *c, struct lxc_snapshot **ret_snaps)
+{
+	int ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_snapshot_list(c, ret_snaps);
+	current_config = old;
+	return ret;
+}
+
+static bool do_lxcapi_snapshot_restore(struct lxc_container *c, const char *snapname, const char *newname)
 {
 	char clonelxcpath[MAXPATHLEN];
 	int flags = 0;
@@ -3192,6 +3570,16 @@ static bool lxcapi_snapshot_restore(struct lxc_container *c, const char *snapnam
 	return b;
 }
 
+static bool lxcapi_snapshot_restore(struct lxc_container *c, const char *snapname, const char *newname)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_snapshot_restore(c, snapname, newname);
+	current_config = old;
+	return ret;
+}
+
 static bool do_snapshot_destroy(const char *snapname, const char *clonelxcpath)
 {
 	struct lxc_container *snap = NULL;
@@ -3203,7 +3591,7 @@ static bool do_snapshot_destroy(const char *snapname, const char *clonelxcpath)
 		goto err;
 	}
 
-	if (!lxcapi_destroy(snap)) {
+	if (!do_lxcapi_destroy(snap)) {
 		ERROR("Could not destroy snapshot %s", snapname);
 		goto err;
 	}
@@ -3247,7 +3635,7 @@ static bool remove_all_snapshots(const char *path)
 	return bret;
 }
 
-static bool lxcapi_snapshot_destroy(struct lxc_container *c, const char *snapname)
+static bool do_lxcapi_snapshot_destroy(struct lxc_container *c, const char *snapname)
 {
 	char clonelxcpath[MAXPATHLEN];
 
@@ -3260,7 +3648,17 @@ static bool lxcapi_snapshot_destroy(struct lxc_container *c, const char *snapnam
 	return do_snapshot_destroy(snapname, clonelxcpath);
 }
 
-static bool lxcapi_snapshot_destroy_all(struct lxc_container *c)
+static bool lxcapi_snapshot_destroy(struct lxc_container *c, const char *snapname)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_snapshot_destroy(c, snapname);
+	current_config = old;
+	return ret;
+}
+
+static bool do_lxcapi_snapshot_destroy_all(struct lxc_container *c)
 {
 	char clonelxcpath[MAXPATHLEN];
 
@@ -3273,9 +3671,29 @@ static bool lxcapi_snapshot_destroy_all(struct lxc_container *c)
 	return remove_all_snapshots(clonelxcpath);
 }
 
-static bool lxcapi_may_control(struct lxc_container *c)
+static bool lxcapi_snapshot_destroy_all(struct lxc_container *c)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_snapshot_destroy_all(c);
+	current_config = old;
+	return ret;
+}
+
+static bool do_lxcapi_may_control(struct lxc_container *c)
 {
 	return lxc_try_cmd(c->name, c->config_path) == 0;
+}
+
+static bool lxcapi_may_control(struct lxc_container *c)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_may_control(c);
+	current_config = old;
+	return ret;
 }
 
 static bool do_add_remove_node(pid_t init_pid, const char *path, bool add,
@@ -3341,7 +3759,7 @@ static bool add_remove_device_node(struct lxc_container *c, const char *src_path
 	const char *p;
 
 	/* make sure container is running */
-	if (!c->is_running(c)) {
+	if (!do_lxcapi_is_running(c)) {
 		ERROR("container is not running");
 		return false;
 	}
@@ -3365,17 +3783,17 @@ static bool add_remove_device_node(struct lxc_container *c, const char *src_path
 	if (ret < 0 || ret >= MAX_BUFFER)
 		return false;
 
-	if (!do_add_remove_node(c->init_pid(c), p, add, &st))
+	if (!do_add_remove_node(do_lxcapi_init_pid(c), p, add, &st))
 		return false;
 
 	/* add or remove device to/from cgroup access list */
 	if (add) {
-		if (!c->set_cgroup_item(c, "devices.allow", value)) {
+		if (!do_lxcapi_set_cgroup_item(c, "devices.allow", value)) {
 			ERROR("set_cgroup_item failed while adding the device node");
 			return false;
 		}
 	} else {
-		if (!c->set_cgroup_item(c, "devices.deny", value)) {
+		if (!do_lxcapi_set_cgroup_item(c, "devices.deny", value)) {
 			ERROR("set_cgroup_item failed while removing the device node");
 			return false;
 		}
@@ -3384,7 +3802,7 @@ static bool add_remove_device_node(struct lxc_container *c, const char *src_path
 	return true;
 }
 
-static bool lxcapi_add_device_node(struct lxc_container *c, const char *src_path, const char *dest_path)
+static bool do_lxcapi_add_device_node(struct lxc_container *c, const char *src_path, const char *dest_path)
 {
 	if (am_unpriv()) {
 		ERROR(NOT_SUPPORTED_ERROR, __FUNCTION__);
@@ -3393,7 +3811,17 @@ static bool lxcapi_add_device_node(struct lxc_container *c, const char *src_path
 	return add_remove_device_node(c, src_path, dest_path, true);
 }
 
-static bool lxcapi_remove_device_node(struct lxc_container *c, const char *src_path, const char *dest_path)
+static bool lxcapi_add_device_node(struct lxc_container *c, const char *src_path, const char *dest_path)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_add_device_node(c, src_path, dest_path);
+	current_config = old;
+	return ret;
+}
+
+static bool do_lxcapi_remove_device_node(struct lxc_container *c, const char *src_path, const char *dest_path)
 {
 	if (am_unpriv()) {
 		ERROR(NOT_SUPPORTED_ERROR, __FUNCTION__);
@@ -3402,7 +3830,17 @@ static bool lxcapi_remove_device_node(struct lxc_container *c, const char *src_p
 	return add_remove_device_node(c, src_path, dest_path, false);
 }
 
-static bool lxcapi_attach_interface(struct lxc_container *c, const char *ifname,
+static bool lxcapi_remove_device_node(struct lxc_container *c, const char *src_path, const char *dest_path)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_remove_device_node(c, src_path, dest_path);
+	current_config = old;
+	return ret;
+}
+
+static bool do_lxcapi_attach_interface(struct lxc_container *c, const char *ifname,
 				const char *dst_ifname)
 {
 	int ret = 0;
@@ -3425,7 +3863,7 @@ static bool lxcapi_attach_interface(struct lxc_container *c, const char *ifname,
 			goto err;
 	}
 
-	ret = lxc_netdev_move_by_name(ifname, c->init_pid(c), dst_ifname);
+	ret = lxc_netdev_move_by_name(ifname, do_lxcapi_init_pid(c), dst_ifname);
 	if (ret)
 		goto err;
 
@@ -3435,7 +3873,18 @@ err:
 	return false;
 }
 
-static bool lxcapi_detach_interface(struct lxc_container *c, const char *ifname,
+static bool lxcapi_attach_interface(struct lxc_container *c, const char *ifname,
+				const char *dst_ifname)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_attach_interface(c, ifname, dst_ifname);
+	current_config = old;
+	return ret;
+}
+
+static bool do_lxcapi_detach_interface(struct lxc_container *c, const char *ifname,
 					const char *dst_ifname)
 {
 	pid_t pid, pid_outside;
@@ -3488,6 +3937,17 @@ static bool lxcapi_detach_interface(struct lxc_container *c, const char *ifname,
 		return false;
 
 	return true;
+}
+
+static bool lxcapi_detach_interface(struct lxc_container *c, const char *ifname,
+					const char *dst_ifname)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_detach_interface(c, ifname, dst_ifname);
+	current_config = old;
+	return ret;
 }
 
 struct criu_opts {
@@ -3781,7 +4241,7 @@ out:
 	return true;
 }
 
-static bool lxcapi_checkpoint(struct lxc_container *c, char *directory, bool stop, bool verbose)
+static bool do_lxcapi_checkpoint(struct lxc_container *c, char *directory, bool stop, bool verbose)
 {
 	pid_t pid;
 	int status;
@@ -3826,6 +4286,16 @@ static bool lxcapi_checkpoint(struct lxc_container *c, char *directory, bool sto
 	}
 }
 
+static bool lxcapi_checkpoint(struct lxc_container *c, char *directory, bool stop, bool verbose)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_checkpoint(c, directory, stop, verbose);
+	current_config = old;
+	return ret;
+}
+
 static bool restore_net_info(struct lxc_container *c)
 {
 	struct lxc_list *it;
@@ -3853,7 +4323,7 @@ out_unlock:
 	return !has_error;
 }
 
-static bool lxcapi_restore(struct lxc_container *c, char *directory, bool verbose)
+static bool do_lxcapi_restore(struct lxc_container *c, char *directory, bool verbose)
 {
 	pid_t pid;
 	struct lxc_rootfs *rootfs;
@@ -3982,6 +4452,16 @@ out_fini_handler:
 	return !has_error;
 }
 
+static bool lxcapi_restore(struct lxc_container *c, char *directory, bool verbose)
+{
+	bool ret;
+	struct lxc_conf *old = current_config;
+	current_config = c ? c->lxc_conf : NULL;
+	ret = do_lxcapi_restore(c, directory, verbose);
+	current_config = old;
+	return ret;
+}
+
 static int lxcapi_attach_run_waitl(struct lxc_container *c, lxc_attach_options_t *options, const char *program, const char *arg, ...)
 {
 	va_list ap;
@@ -3991,18 +4471,24 @@ static int lxcapi_attach_run_waitl(struct lxc_container *c, lxc_attach_options_t
 	if (!c)
 		return -1;
 
+	struct lxc_conf *old = current_config;
+	current_config = c->lxc_conf;
+
 	va_start(ap, arg);
 	argv = lxc_va_arg_list_to_argv_const(ap, 1);
 	va_end(ap);
 
 	if (!argv) {
 		ERROR("Memory allocation error.");
-		return -1;
+		ret = -1;
+		goto out;
 	}
 	argv[0] = arg;
 
-	ret = lxcapi_attach_run_wait(c, options, program, (const char * const *)argv);
+	ret = do_lxcapi_attach_run_wait(c, options, program, (const char * const *)argv);
 	free((void*)argv);
+out:
+	current_config = old;
 	return ret;
 }
 
@@ -4119,12 +4605,6 @@ struct lxc_container *lxc_container_new(const char *name, const char *configpath
 	c->checkpoint = lxcapi_checkpoint;
 	c->restore = lxcapi_restore;
 
-	/* we'll allow the caller to update these later */
-	if (lxc_log_init(NULL, "none", NULL, "lxc_container", 0, c->config_path)) {
-		fprintf(stderr, "failed to open log\n");
-		goto err;
-	}
-
 	return c;
 
 err:
@@ -4198,7 +4678,7 @@ int list_defined_containers(const char *lxcpath, char ***names, struct lxc_conta
 					goto free_bad;
 			continue;
 		}
-		if (!lxcapi_is_defined(c)) {
+		if (!do_lxcapi_is_defined(c)) {
 			INFO("Container %s:%s has a config but is not defined",
 				lxcpath, direntp->d_name);
 			if (names)
