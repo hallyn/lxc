@@ -33,6 +33,8 @@
 #include <strings.h>
 #include <stdbool.h>
 
+#include "conf.h"
+
 #ifndef O_CLOEXEC
 #define O_CLOEXEC 02000000
 #endif
@@ -116,7 +118,13 @@ lxc_log_priority_is_enabled(const struct lxc_log_category* category,
 	       category->parent)
 		category = category->parent;
 
-	return priority >= category->priority;
+	int cmp_prio = category->priority;
+#ifndef NO_LXC_CONF
+	if (current_config && current_config->loglevel != LXC_LOG_PRIORITY_NOTSET)
+		cmp_prio = current_config->loglevel;
+#endif
+
+	return priority >= cmp_prio;
 }
 
 /*
