@@ -454,8 +454,10 @@ extern int lxc_log_set_file(char **dest, int *fd, const char *fname)
 	*dest = strdup(fname);
 	if (!*dest)
 		return -ENOMEM;
-	if (*fd != -1)
+	if (*fd != -1) {
 		close(*fd);
+		*fd = -1;
+	}
 
 	if (build_dir(fname)) {
 		ERROR("failed to create dir for log file \"%s\" : %s", fname,
