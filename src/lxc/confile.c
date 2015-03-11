@@ -1198,7 +1198,7 @@ static int config_loglevel(const char *key, const char *value,
 	// store these values in the lxc_conf, and then try to set for
 	// actual current logging.
 	lxc_conf->loglevel = newlevel;
-	return lxc_log_set_level(&c->loglevel, newlevel);
+	return lxc_log_set_level(&lxc_conf->loglevel, newlevel);
 }
 
 static int config_autodev(const char *key, const char *value,

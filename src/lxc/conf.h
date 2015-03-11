@@ -365,6 +365,12 @@ struct lxc_conf {
 	char *init_cmd;
 };
 
+#ifdef HAVE_TLS
+extern __thread struct lxc_conf *current_config;
+#else
+extern struct lxc_conf *current_config;
+#endif
+
 int run_lxc_hooks(const char *name, char *hook, struct lxc_conf *conf,
 		  const char *lxcpath, char *argv[]);
 
