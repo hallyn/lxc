@@ -251,6 +251,7 @@ static void check_supports_multiple_controllers(pid_t pid)
 		}
 	}
 	fclose(f);
+	free(line);
 }
 
 static int send_creds(int sock, int rpid, int ruid, int rgid)
@@ -754,6 +755,34 @@ static inline bool abs_cgroup_supported(void) {
 #define cgmanager_get_pid_cgroup_abs_sync(...) -1
 #endif
 
+static void strip(char *s) {
+	int len;
+	if (!s)
+		return;
+	len = strlen(s);
+	while (len && s[len-1] == '\n') {
+		s[len-1] = '\0';
+		len--;
+	}
+}
+
+static char *get_pid_cgroup_abs(const char *controller, pid_t pid)
+{
+	char *cgroup = NULL;
+	int ret;
+
+	ret = cgmanager_get_pid_cgroup_abs_sync(NULL, cgroup_manager, controller, getpid(), &cgroup);
+	if (ret != 0) {
+		cgroup = NULL;
+		NihError *nerr;
+		nerr = nih_error_get();
+		nih_free(nerr);
+	}
+	if (cgroup)
+		strip(cgroup);
+	return cgroup;
+}
+
 static char *try_get_abs_cgroup(const char *name, const char *lxcpath,
 		const char *controller)
 {
@@ -823,6 +852,33 @@ static inline void free_abs_cgroup(char *cgroup)
 		free(cgroup);
 }
 
+/*
+ * Enter a cgroup - but do nothing if we are already in that cgroup.
+ * This must be called after cgm_dbus_connect()
+ */
+static bool already_in_or_enter(const char *controller, const char *cgroup, bool abs) {
+	if (abs) {
+		// Compare our cgroup to the requested one
+		nih_local char *cg = get_pid_cgroup_abs(controller, getpid());
+		if (cg && strcmp(cg, cgroup) == 0)
+			return true;
+	} else {
+		/*
+		 * Not an absolute cgroup change request, so cgroup is relative
+		 * to ours.  So 'already in cgroup' is true if cgroup == ""
+		 */
+		if (strlen(cgroup) == 0)
+			return true;
+	}
+
+	/* we're not already in the cgroup, so try to enter it */
+	return lxc_cgmanager_enter(getpid(), controller, cgroup, abs);
+}
+
+/*
+ * cgm_get forks a child to run do_cgm_get to avoid the parent having to change
+ * cgroups (and potentially getting stuck)
+ */
 static void do_cgm_get(const char *name, const char *lxcpath, const char *filename, int outp, bool sendvalue)
 {
 	char *controller, *key, *cgroup = NULL, *cglast;
@@ -866,7 +922,7 @@ static void do_cgm_get(const char *name, const char *lxcpath, const char *filena
 		exit(1);
 	}
 	*cglast = '\0';
-	if (!lxc_cgmanager_enter(getpid(), controller, cgroup, abs_cgroup_supported())) {
+	if (!already_in_or_enter( controller, cgroup, abs_cgroup_supported())) {
 		ERROR("Failed to enter container cgroup %s:%s", controller, cgroup);
 		ret = write(outp, &len, sizeof(len));
 		if (ret != sizeof(len))
