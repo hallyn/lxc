@@ -1093,6 +1093,75 @@ static void cull_user_controllers(void)
 	}
 }
 
+static bool in_comma_list(const char *c, const char *cgroup_use)
+{
+	char *e;
+
+	do {
+		size_t len;
+
+		e = strchr(c, ',');
+		len = e ? e - c : strlen(c);
+
+		if (strncmp(c, cgroup_use, len) == 0)
+			return true;
+	} while (e);
+
+	return false;
+}
+
+static bool in_subsystem_list(const char *c)
+{
+	int i;
+
+	for (i = 0; i < nr_subsystems; i++) {
+		if (strcmp(c, subsystems[i]) == 0)
+			return true;
+	}
+
+	return false;
+}
+
+/*
+ * If /etc/lxc/lxc.conf specifies lxc.cgroup.use = "freezer,memory",
+ * then clear out any other subsystems, and make sure that freezer
+ * and memory are both enabled
+ */
+static bool verify_and_prune(const char *cgroup_use)
+{
+	const char *p;
+	char *e;
+	int i, j;
+
+	for (p=cgroup_use, e = strchr(p, ','); p && *p; p = e + 1) {
+		if (e)
+			*e = '\0';
+
+		if (!in_subsystem_list(p)) {
+			ERROR("Controller %s required by lxc.cgroup.use but not available\n", p);
+			return false;
+		}
+
+		if (e)
+			*e = ',';
+		if (!e)
+			break;
+	}
+
+	for (i = 0; i < nr_subsystems; i++) {
+		if (in_comma_list(subsystems[i], cgroup_use))
+			continue;
+		for (j = i;  j < nr_subsystems-1; j++)
+			subsystems[j] = subsystems[j+1];
+		nr_subsystems--;
+	}
+
+	for (i = 0; i < nr_subsystems; i++) {
+		ERROR("subsystem %d: %s\n", i, subsystems[i]);
+	}
+	return true;
+}
+
 static bool collect_subsytems(void)
 {
 	char *line = NULL;
@@ -1154,6 +1223,15 @@ static bool collect_subsytems(void)
 		return false;
 	}
 
+	/* make sure that cgroup.use can be and is honored */
+	const char *cgroup_use = NULL;
+	cgroup_use = lxc_global_config_value("lxc.cgroup.use");
+	if (!cgroup_use && errno != 0)
+		goto out_good;
+	if (cgroup_use && !verify_and_prune(cgroup_use))
+		goto out_free;
+
+out_good:
 	return true;
 
 out_free:
