@@ -1105,6 +1105,7 @@ static bool in_comma_list(const char *c, const char *cgroup_use)
 
 		if (strncmp(c, cgroup_use, len) == 0)
 			return true;
+		c = e + 1;
 	} while (e);
 
 	return false;
