@@ -1134,7 +1134,8 @@ static bool verify_and_prune(const char *cgroup_use)
 	char *e;
 	int i, j;
 
-	for (p=cgroup_use, e = strchr(p, ','); p && *p; p = e + 1) {
+	for (p = cgroup_use; p && *p; p = e + 1) {
+		e = strchr(p, ',');
 		if (e)
 			*e = '\0';
 
@@ -1149,9 +1150,12 @@ static bool verify_and_prune(const char *cgroup_use)
 			break;
 	}
 
-	for (i = 0; i < nr_subsystems; i++) {
-		if (in_comma_list(subsystems[i], cgroup_use))
+	for (i = 0; i < nr_subsystems;) {
+		if (in_comma_list(subsystems[i], cgroup_use)) {
+			i++;
 			continue;
+		}
+		free(subsystems[i]);
 		for (j = i;  j < nr_subsystems-1; j++)
 			subsystems[j] = subsystems[j+1];
 		nr_subsystems--;
@@ -1167,6 +1171,7 @@ static bool collect_subsytems(void)
 {
 	char *line = NULL;
 	size_t sz = 0;
+	const char *cgroup_use = NULL;
 	FILE *f;
 
 	if (subsystems) // already initialized
@@ -1225,20 +1230,26 @@ static bool collect_subsytems(void)
 	}
 
 	/* make sure that cgroup.use can be and is honored */
-	const char *cgroup_use = NULL;
 	cgroup_use = lxc_global_config_value("lxc.cgroup.use");
 	if (!cgroup_use && errno != 0)
 		goto out_good;
-	if (cgroup_use && !verify_and_prune(cgroup_use))
-		goto out_free;
+	if (cgroup_use) {
+		if (!verify_and_prune(cgroup_use))
+			goto out_free;
+		subsystems_inone[0] = NIH_MUST( strdup(cgroup_use) );
+	}
 
 out_good:
+	if (cgroup_use)
+		free(cgroup_use);
 	return true;
 
 out_free:
 	free(line);
 	fclose(f);
 	free_subsystems();
+	if (cgroup_use)
+		free(cgroup_use);
 	return false;
 }
 
