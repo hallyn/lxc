@@ -1093,19 +1093,17 @@ static void cull_user_controllers(void)
 	}
 }
 
-static bool in_comma_list(const char *c, const char *cgroup_use)
+static bool in_comma_list(const char *inword, const char *cgroup_use)
 {
 	char *e;
+	size_t inlen = strlen(inword), len;
 
 	do {
-		size_t len;
-
-		e = strchr(c, ',');
-		len = e ? e - c : strlen(c);
-
-		if (strncmp(c, cgroup_use, len) == 0)
+		e = strchr(cgroup_use, ',');
+		len = e ? e - cgroup_use : strlen(cgroup_use);
+		if (len == inlen && strncmp(inword, cgroup_use, len) == 0)
 			return true;
-		c = e + 1;
+		cgroup_use = e + 1;
 	} while (e);
 
 	return false;
@@ -1158,12 +1156,10 @@ static bool verify_and_prune(const char *cgroup_use)
 		free(subsystems[i]);
 		for (j = i;  j < nr_subsystems-1; j++)
 			subsystems[j] = subsystems[j+1];
+		subsystems[nr_subsystems-1] = NULL;
 		nr_subsystems--;
 	}
 
-	for (i = 0; i < nr_subsystems; i++) {
-		ERROR("subsystem %d: %s\n", i, subsystems[i]);
-	}
 	return true;
 }
 
@@ -1171,7 +1167,6 @@ static bool collect_subsytems(void)
 {
 	char *line = NULL;
 	size_t sz = 0;
-	const char *cgroup_use = NULL;
 	FILE *f;
 
 	if (subsystems) // already initialized
@@ -1230,26 +1225,23 @@ static bool collect_subsytems(void)
 	}
 
 	/* make sure that cgroup.use can be and is honored */
-	cgroup_use = lxc_global_config_value("lxc.cgroup.use");
+	const char *cgroup_use = lxc_global_config_value("lxc.cgroup.use");
 	if (!cgroup_use && errno != 0)
 		goto out_good;
 	if (cgroup_use) {
 		if (!verify_and_prune(cgroup_use))
 			goto out_free;
 		subsystems_inone[0] = NIH_MUST( strdup(cgroup_use) );
+		cgm_all_controllers_same = false;
 	}
 
 out_good:
-	if (cgroup_use)
-		free(cgroup_use);
 	return true;
 
 out_free:
 	free(line);
 	fclose(f);
 	free_subsystems();
-	if (cgroup_use)
-		free(cgroup_use);
 	return false;
 }
 
