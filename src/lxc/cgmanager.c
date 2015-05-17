@@ -1383,7 +1383,7 @@ static bool cgm_bind_dir(const char *root, const char *dirname)
  */
 #define CGMANAGER_LOWER_SOCK "/sys/fs/cgroup/cgmanager.lower"
 #define CGMANAGER_UPPER_SOCK "/sys/fs/cgroup/cgmanager"
-static bool cgm_mount_cgroup(void *hdata, const char *root, int type)
+bool cgm_mount_cgroup(void *hdata, const char *root, int type)
 {
 	if (dir_exists(CGMANAGER_LOWER_SOCK))
 		return cgm_bind_dir(root, CGMANAGER_LOWER_SOCK);
@@ -1411,6 +1411,5 @@ static struct cgroup_ops cgmanager_ops = {
 	.mount_cgroup = cgm_mount_cgroup,
 	.nrtasks = cgm_get_nrtasks,
 	.disconnect = NULL,
-	.driver = CGMANAGER,
 };
 #endif
