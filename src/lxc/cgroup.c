@@ -45,13 +45,14 @@ void cgroup_ops_init(void)
 	}
 
 	DEBUG("cgroup_init");
+	ops = cgfs_ops_init();
 	#if HAVE_CGMANAGER
-	ops = cgm_ops_init();
-	#endif
 	if (!ops)
-		ops = cgfs_ops_init();
+		ops = cgm_ops_init();
+	#endif
 	if (ops)
 		INFO("Initialized cgroup driver %s", ops->name);
+	ERROR("Failed initializing cgroup driver!");
 }
 
 bool cgroup_init(struct lxc_handler *handler)
@@ -188,9 +189,4 @@ void cgroup_disconnect(void)
 {
 	if (ops && ops->disconnect)
 		ops->disconnect();
-}
-
-cgroup_driver_t cgroup_driver(void)
-{
-	return ops->driver;
 }

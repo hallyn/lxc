@@ -1338,11 +1338,15 @@ static bool cgroupfs_mount_cgroup(void *hdata, const char *root, int type)
 	struct cgfs_data *cgfs_d;
 	struct cgroup_process_info *info, *base_info;
 	int r, saved_errno = 0;
+	bool cgm_setup;
 
 	cgfs_d = hdata;
 	if (!cgfs_d)
 		return false;
 	base_info = cgfs_d->info;
+
+	/* Try to set up cgmanager mounts;  ignore failure */
+	cgm_setup = cgm_mount_cgroup(hdata, root, type);
 
 	/* If we get passed the _NOSPEC types, we default to _MIXED, since we don't
 	 * have access to the lxc_conf object at this point. It really should be up
@@ -1363,10 +1367,16 @@ static bool cgroupfs_mount_cgroup(void *hdata, const char *root, int type)
 	if (!path)
 		return false;
 	snprintf(path, bufsz, "%s/sys/fs/cgroup", root);
-	r = mount("cgroup_root", path, "tmpfs", MS_NOSUID|MS_NODEV|MS_NOEXEC|MS_RELATIME, "size=10240k,mode=755");
-	if (r < 0) {
-		SYSERROR("could not mount tmpfs to /sys/fs/cgroup in the container");
-		return false;
+
+	if (!cgm_setup) {
+		r = mount("cgroup_root", path, "tmpfs",
+				MS_NOSUID|MS_NODEV|MS_NOEXEC|MS_RELATIME,
+				"size=10240k,mode=755");
+		if (r < 0) {
+			SYSERROR("could not mount tmpfs to /sys/fs/cgroup in"
+				 "the container");
+			return false;
+		}
 	}
 
 	/* now mount all the hierarchies we care about */
@@ -2217,8 +2227,35 @@ static bool init_cpuset_if_needed(struct cgroup_mount_point *mp,
 		do_init_cpuset_file(mp, path, "/cpuset.mems") );
 }
 
+static bool verify_cgops_usable(void)
+{
+	struct cgroup_meta_data *meta;
+	bool ret = false;
+	int i;
+
+	meta = lxc_cgroup_load_meta();
+	if (!meta)
+		return false;
+	/* verify that all paths are writeable */
+	for (i = 0; i <= meta->maximum_hierarchy; i++) {
+		struct cgroup_hierarchy *h = meta->hierarchies[i];
+		if (!h || !h->used)
+			continue;
+		if (!h->rw_absolute_mount_point) {
+			INFO("unwriteable cgroup mountpoint, cannot use cgfs");
+			goto out;
+		}
+	}
+	ret = true;
+out:
+	lxc_cgroup_put_meta(meta);
+	return ret;
+}
+
 struct cgroup_ops *cgfs_ops_init(void)
 {
+	if (!verify_cgops_usable())
+		return NULL;
 	return &cgfs_ops;
 }
 
@@ -2413,5 +2450,4 @@ static struct cgroup_ops cgfs_ops = {
 	.chown = NULL,
 	.mount_cgroup = cgroupfs_mount_cgroup,
 	.nrtasks = cgfs_nrtasks,
-	.driver = CGFS,
 };
