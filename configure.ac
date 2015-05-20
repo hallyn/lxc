@@ -271,6 +271,8 @@ AM_COND_IF([ENABLE_CGMANAGER],
 	PKG_CHECK_MODULES([NIH], [libnih >= 1.0.2])
 	PKG_CHECK_MODULES([NIH_DBUS], [libnih-dbus >= 1.0.0])
 	PKG_CHECK_MODULES([DBUS], [dbus-1 >= 1.2.16])
+	AC_CHECK_LIB(nih, nih_alloc)
+	AC_CHECK_FUNCS(nih_threadsafe, , , libnih)
 	])
 
 AC_MSG_CHECKING(for get_pid_cgroup_abs_sync)

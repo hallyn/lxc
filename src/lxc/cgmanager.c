@@ -73,6 +73,19 @@ struct cgm_data {
 
 static pthread_mutex_t cgm_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+static bool threadsafe_nih;
+
+void detect_libnih_threadsafe(void)
+{
+#ifdef HAVE_NIH_THREADSAFE
+	if (nih_threadsafe()) {
+		threadsafe_nih = true;
+		return;
+	}
+#endif
+	threadsafe_nih = false;
+}
+
 static void lock_mutex(pthread_mutex_t *l)
 {
 	int ret;
@@ -95,11 +108,15 @@ static void unlock_mutex(pthread_mutex_t *l)
 
 void cgm_lock(void)
 {
+	if (threadsafe_nih)
+		return;
 	lock_mutex(&cgm_mutex);
 }
 
 void cgm_unlock(void)
 {
+	if (threadsafe_nih)
+		return;
 	unlock_mutex(&cgm_mutex);
 }
 
@@ -111,8 +128,8 @@ static void process_lock_setup_atfork(void)
 }
 #endif
 
-static NihDBusProxy *cgroup_manager = NULL;
-static int32_t api_version;
+static __thread NihDBusProxy *cgroup_manager = NULL;
+static __thread int32_t api_version;
 
 static struct cgroup_ops cgmanager_ops;
 static int nr_subsystems;
@@ -842,7 +859,7 @@ static void do_cgm_get(const char *name, const char *lxcpath, const char *filena
 		ret = write(outp, &len, sizeof(len));
 		if (ret != sizeof(len))
 			WARN("Failed to warn cgm_get of error; parent may hang");
-		exit(1);
+		_exit(1);
 	}
 	*key = '\0';
 
@@ -851,7 +868,7 @@ static void do_cgm_get(const char *name, const char *lxcpath, const char *filena
 		ret = write(outp, &len, sizeof(len));
 		if (ret != sizeof(len))
 			WARN("Failed to warn cgm_get of error; parent may hang");
-		exit(1);
+		_exit(1);
 	}
 	cgroup = try_get_abs_cgroup(name, lxcpath, controller);
 	if (!cgroup) {
@@ -859,7 +876,7 @@ static void do_cgm_get(const char *name, const char *lxcpath, const char *filena
 		ret = write(outp, &len, sizeof(len));
 		if (ret != sizeof(len))
 			WARN("Failed to warn cgm_get of error; parent may hang");
-		exit(1);
+		_exit(1);
 	}
 	cglast = strrchr(cgroup, '/');
 	if (!cglast) {
@@ -868,7 +885,7 @@ static void do_cgm_get(const char *name, const char *lxcpath, const char *filena
 		ret = write(outp, &len, sizeof(len));
 		if (ret != sizeof(len))
 			WARN("Failed to warn cgm_get of error; parent may hang");
-		exit(1);
+		_exit(1);
 	}
 	*cglast = '\0';
 	if (!lxc_cgmanager_enter(getpid(), controller, cgroup, abs_cgroup_supported())) {
@@ -878,7 +895,7 @@ static void do_cgm_get(const char *name, const char *lxcpath, const char *filena
 			WARN("Failed to warn cgm_get of error; parent may hang");
 		cgm_dbus_disconnect();
 		free_abs_cgroup(cgroup);
-		exit(1);
+		_exit(1);
 	}
 	if (cgmanager_get_value_sync(NULL, cgroup_manager, controller, cglast+1, filename, &result) != 0) {
 		NihError *nerr;
@@ -889,7 +906,7 @@ static void do_cgm_get(const char *name, const char *lxcpath, const char *filena
 		ret = write(outp, &len, sizeof(len));
 		if (ret != sizeof(len))
 			WARN("Failed to warn cgm_get of error; parent may hang");
-		exit(1);
+		_exit(1);
 	}
 	free_abs_cgroup(cgroup);
 	cgm_dbus_disconnect();
@@ -897,15 +914,15 @@ static void do_cgm_get(const char *name, const char *lxcpath, const char *filena
 	ret = write(outp, &len, sizeof(len));
 	if (ret != sizeof(len)) {
 		WARN("Failed to send length to parent");
-		exit(1);
+		_exit(1);
 	}
 	if (!len || !sendvalue) {
-		exit(0);
+		_exit(0);
 	}
 	ret = write(outp, result, len);
 	if (ret < 0)
-		exit(1);
-	exit(0);
+		_exit(1);
+	_exit(0);
 }
 
 /* cgm_get is called to get container cgroup settings, not during startup */
@@ -982,7 +999,7 @@ static void do_cgm_set(const char *name, const char *lxcpath, const char *filena
 		ret = write(outp, &retval, sizeof(retval));
 		if (ret != sizeof(retval))
 			WARN("Failed to warn cgm_set of error; parent may hang");
-		exit(1);
+		_exit(1);
 	}
 	*key = '\0';
 
@@ -991,7 +1008,7 @@ static void do_cgm_set(const char *name, const char *lxcpath, const char *filena
 		ret = write(outp, &retval, sizeof(retval));
 		if (ret != sizeof(retval))
 			WARN("Failed to warn cgm_set of error; parent may hang");
-		exit(1);
+		_exit(1);
 	}
 	cgroup = try_get_abs_cgroup(name, lxcpath, controller);
 	if (!cgroup) {
@@ -999,7 +1016,7 @@ static void do_cgm_set(const char *name, const char *lxcpath, const char *filena
 		ret = write(outp, &retval, sizeof(retval));
 		if (ret != sizeof(retval))
 			WARN("Failed to warn cgm_set of error; parent may hang");
-		exit(1);
+		_exit(1);
 	}
 	cglast = strrchr(cgroup, '/');
 	if (!cglast) {
@@ -1008,7 +1025,7 @@ static void do_cgm_set(const char *name, const char *lxcpath, const char *filena
 		ret = write(outp, &retval, sizeof(retval));
 		if (ret != sizeof(retval))
 			WARN("Failed to warn cgm_set of error; parent may hang");
-		exit(1);
+		_exit(1);
 	}
 	*cglast = '\0';
 	if (!lxc_cgmanager_enter(getpid(), controller, cgroup, abs_cgroup_supported())) {
@@ -1018,7 +1035,7 @@ static void do_cgm_set(const char *name, const char *lxcpath, const char *filena
 			WARN("Failed to warn cgm_set of error; parent may hang");
 		cgm_dbus_disconnect();
 		free_abs_cgroup(cgroup);
-		exit(1);
+		_exit(1);
 	}
 	if (cgmanager_set_value_sync(NULL, cgroup_manager, controller, cglast+1, filename, value) != 0) {
 		NihError *nerr;
@@ -1031,7 +1048,7 @@ static void do_cgm_set(const char *name, const char *lxcpath, const char *filena
 		ret = write(outp, &retval, sizeof(retval));
 		if (ret != sizeof(retval))
 			WARN("Failed to warn cgm_set of error; parent may hang");
-		exit(1);
+		_exit(1);
 	}
 	free_abs_cgroup(cgroup);
 	cgm_dbus_disconnect();
@@ -1039,9 +1056,9 @@ static void do_cgm_set(const char *name, const char *lxcpath, const char *filena
 	retval = 1;
 	ret = write(outp, &retval, sizeof(retval));
 	if (ret != sizeof(retval)) {
-		exit(1);
+		_exit(1);
 	}
-	exit(0);
+	_exit(0);
 }
 
 /* cgm_set is called to change cgroup settings, not during startup */
@@ -1172,6 +1189,9 @@ struct cgroup_ops *cgm_ops_init(void)
 {
 	if (!collect_subsytems())
 		return NULL;
+
+	detect_libnih_threadsafe();
+
 	if (!cgm_dbus_connect())
 		goto err1;
 
