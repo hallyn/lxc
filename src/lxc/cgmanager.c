@@ -503,7 +503,7 @@ static bool chown_cgroup(const char *cgroup_path, struct lxc_conf *conf)
 		if (!lxc_cgmanager_chmod(slist[i], cgroup_path, "", 0775))
 			return false;
 		if (!lxc_cgmanager_chmod(slist[i], cgroup_path, "tasks", 0775))
-			return false;
+			WARN("Failed to chown tasks file - might be unified hierarchy");
 		if (!lxc_cgmanager_chmod(slist[i], cgroup_path, "cgroup.procs", 0775))
 			return false;
 	}
