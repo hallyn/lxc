@@ -1371,6 +1371,7 @@ static bool add_devices_rule(const char *cg, const char *f, const char *v)
 			f, v, cg);
 		return false;
 	}
+INFO("Set cg devices file %s to %s for %s", f, v, cg);
 	return true;
 }
 
@@ -1394,15 +1395,22 @@ static bool add_devices_rule(const char *cg, const char *f, const char *v)
  *	echo a > devices.deny
  * which will clear out the two entries we added.
  */
-static bool setup_full_whitelist(struct lxc_list *settings, const char *cg)
+static bool setup_full_whitelist(struct lxc_list *settings, const char *cg,
+		bool clear)
 {
 	if (!check_for_devices_whitelist(settings))
 		return true;
 
-	if (!add_devices_rule(cg, "devices.deny", "a") ||
-			!add_devices_rule(cg, "devices.allow", "b *:* rwm") ||
-			!add_devices_rule(cg, "devices.allow", "c *:* rwm"))
-		return false;
+	if (clear) {
+		if (!add_devices_rule(cg, "devices.deny", "b *:* rwm") ||
+				!add_devices_rule(cg, "devices.deny", "c *:* rwm"))
+			return false;
+	} else {
+		if (!add_devices_rule(cg, "devices.deny", "a") ||
+				!add_devices_rule(cg, "devices.allow", "b *:* rwm") ||
+				!add_devices_rule(cg, "devices.allow", "c *:* rwm"))
+			return false;
+	}
 
 	return true;
 }
@@ -1430,12 +1438,18 @@ static bool cgm_setup_limits(void *hdata, struct lxc_list *cgroup_settings, bool
 		return false;
 	}
 
-	if (!do_devices && !setup_full_whitelist(cgroup_settings, d->cgroup_path))
+	if (!setup_full_whitelist(cgroup_settings, d->cgroup_path, do_devices))
 		goto out;
 
 	lxc_list_for_each(iterator, sorted_cgroup_settings) {
 		char controller[100], *p;
 		cg = iterator->elem;
+
+		/* this was done earlier at setup_full_whitelist() */
+		if (strcmp(cg->subsystem, "devices.deny") == 0 &&
+				strcmp(cg->value, "a") == 0)
+			continue;
+
 		if (do_devices != !strncmp("devices", cg->subsystem, 7))
 			continue;
 		if (strlen(cg->subsystem) > 100) // i smell a rat
@@ -1450,8 +1464,8 @@ static bool cgm_setup_limits(void *hdata, struct lxc_list *cgroup_settings, bool
 			nerr = nih_error_get();
 			ERROR("call to cgmanager_set_value_sync failed: %s", nerr->message);
 			nih_free(nerr);
-			ERROR("Error setting cgroup %s:%s limit type %s", controller,
-				d->cgroup_path, cg->subsystem);
+			ERROR("Error setting cgroup %s:%s limit type %s value %s", controller,
+				d->cgroup_path, cg->subsystem, cg->value);
 			goto out;
 		}
 
