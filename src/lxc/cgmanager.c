@@ -1345,6 +1345,68 @@ static bool cgm_unfreeze(void *hdata)
 	return ret;
 }
 
+static bool check_for_devices_whitelist(struct lxc_list *settings)
+{
+	struct lxc_list *iterator;
+
+	lxc_list_for_each(iterator, settings) {
+		struct lxc_cgroup *cg = iterator->elem;
+		if (strcmp("devices.deny", cg->subsystem) != 0)
+			continue;
+		if (strcmp(cg->value, "a") == 0)
+			return true;
+	}
+	return false;
+}
+
+static bool add_devices_rule(const char *cg, const char *f, const char *v)
+{
+	if (cgmanager_set_value_sync(NULL, cgroup_manager, "devices",
+				 cg, f, v) != 0) {
+		NihError *nerr;
+		nerr = nih_error_get();
+		ERROR("call to cgmanager_set_value_sync failed: %s", nerr->message);
+		nih_free(nerr);
+		ERROR("Error setting cgroup devices file %s to %s for %s",
+			f, v, cg);
+		return false;
+	}
+	return true;
+}
+
+/*
+ * The kernel doesn't allow switching a devices cg from blacklist to whitelist
+ * (i.e. echo a > devices.deny) once there is a child cgroup.  Since unified
+ * hierarchy only allows placing tasks in leaf nodes, we cannot place the
+ * container future init task into the cgroup before we switch to whitelist.
+ * We also cannot postpone moving the init task into the cgroup because an
+ * unprivileged user would not be able to do the move later (i.e. uid 1000
+ * would not be allowed to move a task owned by uid 100000, cgmanager wouldn't
+ * allow it).  Finally, we want to wait as long as possible to restrict
+ * device access so that the container setup can use block devices etc.
+ *
+ * So, as long as there are device cgroup entries, we first do effectively:
+ *	echo a > devices.deny
+ *	echo "b *:* rwm" . devices.allow
+ *	echo "c *:* rwm" . devices.allow
+ * This allows the container setup to use all devices it might need.  The
+ * cgroup limit list will include another
+ *	echo a > devices.deny
+ * which will clear out the two entries we added.
+ */
+static bool setup_full_whitelist(struct lxc_list *settings, const char *cg)
+{
+	if (!check_for_devices_whitelist(settings))
+		return true;
+
+	if (!add_devices_rule(cg, "devices.deny", "a") ||
+			!add_devices_rule(cg, "devices.allow", "b *:* rwm") ||
+			!add_devices_rule(cg, "devices.allow", "c *:* rwm"))
+		return false;
+
+	return true;
+}
+
 static bool cgm_setup_limits(void *hdata, struct lxc_list *cgroup_settings, bool do_devices)
 {
 	struct cgm_data *d = hdata;
@@ -1367,6 +1429,9 @@ static bool cgm_setup_limits(void *hdata, struct lxc_list *cgroup_settings, bool
 	if (!sorted_cgroup_settings) {
 		return false;
 	}
+
+	if (!do_devices && !setup_full_whitelist(cgroup_settings, d->cgroup_path))
+		goto out;
 
 	lxc_list_for_each(iterator, sorted_cgroup_settings) {
 		char controller[100], *p;
