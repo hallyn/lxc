@@ -45,7 +45,8 @@ void cgroup_ops_init(void)
 	}
 
 	DEBUG("cgroup_init");
-	ops = cgfs_ops_init();
+	if (!geteuid())
+		ops = cgfs_ops_init();
 	#if HAVE_CGMANAGER
 	if (!ops)
 		ops = cgm_ops_init();
