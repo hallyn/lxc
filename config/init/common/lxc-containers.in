@@ -71,6 +71,7 @@ wait_for_bridge()
 # See how we were called.
 case "$1" in
     start)
+        echo "lxc-containers starting"
         [ "x$LXC_AUTO" = "xtrue" ] || { exit 0; }
 
         [ ! -f "$lockdir"/lxc ] || { exit 0; }

@@ -49,6 +49,9 @@ ifup() {
 }
 
 start() {
+    echo "lxc-net sleeping 20s"
+    sleep 20s
+    echo "lxc-net really starting now"
     [ "x$USE_LXC_BRIDGE" = "xtrue" ] || { exit 0; }
 
     [ ! -f "${varrun}/network_up" ] || { echo "lxc-net is already running"; exit 1; }
