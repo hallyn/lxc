@@ -192,6 +192,7 @@ static int apparmor_process_label_set(const char *inlabel, struct lxc_conf *conf
 			return -1;
 		}
 		INFO("Already apparmor-confined");
+		return 0;
 	}
 
 	if (!label) {
