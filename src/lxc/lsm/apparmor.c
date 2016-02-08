@@ -146,18 +146,6 @@ static bool aa_stacking_supported(void) {
 	return false;
 }
 
-/* are we in a confined container? */
-static bool in_aa_confined_container(void) {
-	char *p = apparmor_process_label_get(getpid());
-	bool ret = false;
-	if (p && strcmp(p, "/usr/bin/lxc-start") != 0 && strcmp(p, "unconfined") != 0) {
-		INFO("Already apparmor-confined under %s", p);
-		ret = true;
-	}
-	free(p);
-	return ret;
-}
-
 /*
  * apparmor_process_label_set: Set AppArmor process profile
  *
@@ -174,27 +162,10 @@ static int apparmor_process_label_set(const char *inlabel, struct lxc_conf *conf
 				      int use_default, int on_exec)
 {
 	const char *label = inlabel ? inlabel : conf->lsm_aa_profile;
+	char *curlabel;
 
 	if (!aa_enabled)
 		return 0;
-
-	/* user may request that we just ignore apparmor */
-	if (label && strcmp(label, AA_UNCHANGED) == 0) {
-		INFO("apparmor profile unchanged per user request");
-		return 0;
-	}
-
-	/*
-	 * If we are already confined and no profile was requested,
-	 * then default to unchanged
-	 */
-	if (in_aa_confined_container() && !aa_stacking_supported()) {
-		if (label) {
-			ERROR("already apparmor confined, but new label requested.");
-			return -1;
-		}
-		return 0;
-	}
 
 	if (!label) {
 		if (use_default)
@@ -202,6 +173,28 @@ static int apparmor_process_label_set(const char *inlabel, struct lxc_conf *conf
 		else
 			label = "unconfined";
 	}
+
+	/* user may request that we just ignore apparmor */
+	if (strcmp(label, AA_UNCHANGED) == 0) {
+		INFO("apparmor profile unchanged per user request");
+		return 0;
+	}
+
+	curlabel = apparmor_process_label_get(getpid());
+	if (!aa_stacking_supported() && curlabel) {
+		if (strcmp(curlabel, label) == 0) {
+			free(curlabel);
+			return 0;
+		}
+		if (strcmp(curlabel, "/usr/bin/lxc-start") != 0 &&
+				strcmp(curlabel, AA_UNCHANGED) != 0 &&
+				strcmp(curlabel, label) != 0) {
+			ERROR("already apparmor confined, but new label requested.");
+			free(curlabel);
+			return -1;
+		}
+	}
+	free(curlabel);
 
 	if (!check_mount_feature_enabled() && strcmp(label, "unconfined") != 0) {
 		WARN("Incomplete AppArmor support in your kernel");
