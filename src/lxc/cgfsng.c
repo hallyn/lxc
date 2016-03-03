@@ -57,21 +57,22 @@ static struct cgroup_ops cgfsng_ops;
  *   the co-mounted controllers
  * @mountpoint: the mountpoint we will use.  It will be either
  *   /sys/fs/cgroup/controller or /sys/fs/cgroup/controllerlist
- * @monitor_cgroup: the cgroup in which the lxc monitor lived
- *   at container start for this hierarchy
+ * @base_cgroup: the cgroup under which the container cgroup path
+     is created.  This will be either the caller's cgroup (if not
+     root), or init's cgroup (if root).
  */
 struct hierarchy {
 	char **controllers;
 	char *mountpoint;
-	char *monitor_cgroup;
+	char *base_cgroup;
 };
 
 struct cgfsng_handler_data {
 	struct hierarchy **hierarchies;
 	char *cgroup_use;
 	char *cgroup_pattern;
-	char *container_cgroup;
-	char *name;
+	char *container_cgroup; // cgroup we created for the container
+	char *name; // container name
 };
 
 static void free_controllers(char **clist)
@@ -125,7 +126,7 @@ static void free_hierarchies(struct hierarchy **hlist)
 
 		for (i = 0; hlist[i]; i++) {
 			free(hlist[i]->mountpoint);
-			free(hlist[i]->monitor_cgroup);
+			free(hlist[i]->base_cgroup);
 			free_controllers(hlist[i]->controllers);
 		}
 		free(hlist);
@@ -284,7 +285,7 @@ static bool is_cgroupfs(char *line)
 }
 
 static void add_controller(struct cgfsng_handler_data *d, char **clist,
-			   char *mountpoint, char *monitor_cgroup)
+			   char *mountpoint, char *base_cgroup)
 {
 	struct hierarchy *new;
 
@@ -293,7 +294,7 @@ static void add_controller(struct cgfsng_handler_data *d, char **clist,
 	} while (!new);
 	new->controllers = clist;
 	new->mountpoint = mountpoint;
-	new->monitor_cgroup = monitor_cgroup;
+	new->base_cgroup = base_cgroup;
 }
 
 static char *get_mountpoint(char *line)
@@ -364,9 +365,9 @@ static bool controller_in_clist(char *cgline, char *c)
 	return false;
 }
 
-static char *get_current_cgroup(char *selfcgroup, char *controller)
+static char *get_current_cgroup(char *basecginfo, char *controller)
 {
-	char *p = selfcgroup;
+	char *p = basecginfo;
 
 	while (1) {
 		p = index(p, ':');
@@ -418,14 +419,29 @@ static char *read_file(char *fnam)
 	return buf;
 }
 
+static char *must_make_path(const char *first, ...) __attribute__((sentinel));
+
+static bool test_writeable(char *mountpoint, char *path)
+{
+	char *fullpath = must_make_path(mountpoint, path, "XXXXXX", NULL);
+
+	if (!mkdtemp(fullpath))
+		return false;
+	(void)rmdir(fullpath);
+	return true;
+}
+
 static bool parse_hierarchies(struct cgfsng_handler_data *d)
 {
 	FILE *f;
-	char * line = NULL, *selfcgroup;
+	char * line = NULL, *basecginfo;
 	size_t len = 0;
 
-	selfcgroup = read_file("/proc/self/cgroup");
-	if (!selfcgroup)
+	if (geteuid())
+		basecginfo = read_file("/proc/self/cgroup");
+	else
+		basecginfo = read_file("/proc/1/cgroup");
+	if (!basecginfo)
 		return false;
 
 	if ((f = fopen("/proc/self/mountinfo", "r")) == NULL) {
@@ -436,7 +452,7 @@ static bool parse_hierarchies(struct cgfsng_handler_data *d)
 	/* we support simple cgroup mounts and lxcfs mounts */
 	while (getline(&line, &len, f) != -1) {
 		char **controller_list = NULL;
-		char *mountpoint, *monitor_cgroup;
+		char *mountpoint, *base_cgroup;
 
 		if (!is_cgroup_mountinfo_line(line))
 			continue;
@@ -459,17 +475,24 @@ static bool parse_hierarchies(struct cgfsng_handler_data *d)
 			continue;
 		}
 
-		monitor_cgroup = get_current_cgroup(selfcgroup, controller_list[0]);
-		if (!monitor_cgroup) {
+		base_cgroup = get_current_cgroup(basecginfo, controller_list[0]);
+		if (!base_cgroup) {
 			ERROR("Failed to find current cgroup for controller '%s'", controller_list[0]);
 			free_controllers(controller_list);
 			free(mountpoint);
 			continue;
 		}
-		add_controller(d, controller_list, mountpoint, monitor_cgroup);
+		prune_init_scope(base_cgroup);
+		if (!test_writeable(mountpoint, base_cgroup)) {
+			free_controllers(controller_list);
+			free(mountpoint);
+			free(base_cgroup);
+			continue;
+		}
+		add_controller(d, controller_list, mountpoint, base_cgroup);
 	}
 
-	free(selfcgroup);
+	free(basecginfo);
 
 	fclose(f);
 	free(line);
@@ -526,8 +549,6 @@ out_free:
 	free_handler_data(d);
 	return NULL;
 }
-
-static char *must_make_path(const char *first, ...) __attribute__((sentinel));
 
 static char *must_make_path(const char *first, ...)
 {
@@ -646,7 +667,7 @@ static void cgfsng_destroy(void *hdata, struct lxc_conf *conf)
 	if (d->container_cgroup && d->hierarchies) {
 		int i;
 		for (i = 0; d->hierarchies[i]; i++) {
-			char *fullpath = must_make_path(d->hierarchies[i]->mountpoint, d->container_cgroup, NULL);
+			char *fullpath = must_make_path(d->hierarchies[i]->mountpoint, d->hierarchies[i]->base_cgroup, d->container_cgroup, NULL);
 
 			recursive_destroy(fullpath, conf);
 			free(fullpath);
@@ -663,7 +684,7 @@ struct cgroup_ops *cgfsng_ops_init(void)
 
 static bool create_path_for_hierarchy(struct hierarchy *h, char *cgname)
 {
-	char *fullpath = must_make_path(h->mountpoint, cgname, NULL);
+	char *fullpath = must_make_path(h->mountpoint, h->base_cgroup, cgname, NULL);
 	int ret;
 
 	ret = mkdir(fullpath, 0755);
@@ -673,7 +694,7 @@ static bool create_path_for_hierarchy(struct hierarchy *h, char *cgname)
 
 static void remove_path_for_hierarchy(struct hierarchy *h, char *cgname)
 {
-	char *fullpath = must_make_path(h->mountpoint, cgname, NULL);
+	char *fullpath = must_make_path(h->mountpoint, h->base_cgroup, cgname, NULL);
 
 	if (rmdir(fullpath) < 0)
 		SYSERROR("Failed to clean up cgroup %s from failed creation attempt", fullpath);
@@ -753,7 +774,9 @@ static bool cgfsng_enter(void *hdata, pid_t pid)
 
 	for (i = 0; d->hierarchies[i]; i++) {
 		// todo - handle cgroup.procs for legacy
-		char *fullpath = must_make_path(d->hierarchies[i]->mountpoint, d->container_cgroup, "tasks", NULL);
+		char *fullpath = must_make_path(d->hierarchies[i]->mountpoint,
+						d->hierarchies[i]->base_cgroup,
+						d->container_cgroup, "tasks", NULL);
 		if (lxc_write_to_file(fullpath, pidstr, len, false) != len) {
 			ERROR("Failed to enter %s\n", fullpath);
 			return false;
@@ -761,6 +784,83 @@ static bool cgfsng_enter(void *hdata, pid_t pid)
 	}
 
 	return true;
+}
+
+struct chown_data {
+	struct cgfsng_handler_data *d;
+	uid_t origuid; // target uid in parent namespace
+};
+
+static int chown_cgroup_wrapper(void *data)
+{
+	struct chown_data *arg = data;
+	struct cgfsng_handler_data *d = arg->d;
+	uid_t destuid;
+	int i;
+
+	if (setresgid(0,0,0) < 0)
+		SYSERROR("Failed to setgid to 0");
+	if (setresuid(0,0,0) < 0)
+		SYSERROR("Failed to setuid to 0");
+	if (setgroups(0, NULL) < 0)
+		SYSERROR("Failed to clear groups");
+
+	destuid = get_ns_uid(arg->origuid);
+
+	for (i = 0; d->hierarchies[i]; i++) {
+		char *fullpath = must_make_path(d->hierarchies[i]->mountpoint,
+						d->hierarchies[i]->base_cgroup,
+						d->container_cgroup, NULL);
+		if (chown(fullpath, destuid, 0) < 0) {
+			SYSERROR("Error chowning %s", fullpath);
+			free(fullpath);
+			return -1;
+		}
+		// TODO - do we need to chown tasks and cgroup.procs too?
+
+		free(fullpath);
+	}
+
+	return 0;
+}
+
+static bool cgfsns_chown(void *hdata, struct lxc_conf *conf)
+{
+	struct cgfsng_handler_data *d = hdata;
+	struct chown_data wrap;
+
+	if (!d)
+		return false;
+
+	if (lxc_list_empty(&conf->id_map))
+		return true;
+
+	wrap.d = d;
+	wrap.origuid = geteuid();
+
+	if (userns_exec_1(conf, chown_cgroup_wrapper, &wrap) < 0) {
+		ERROR("Error requesting cgroup chown in new namespace");
+		return false;
+	}
+
+	return true;
+}
+
+static bool cgfsng_mount(void *hdata, const char *root, int type)
+{
+	if (cgns_supported())
+		return true;
+	// TODO - implement this.  Not needed for cgroup namespaces
+	return false;
+}
+
+/*
+ * TODO - implement this at some point
+ * This is not called on any modern kernel, so low priority.
+ * Just add up the nrtasks for all sub-cgroups in the freezer subsystem.
+ */
+static int cgfsng_nrtasks(void *hdata) {
+	return 0;
 }
 
 static struct cgroup_ops cgfsng_ops = {
@@ -777,9 +877,9 @@ static struct cgroup_ops cgfsng_ops = {
 	.setup_limits = NULL,
 	.name = "cgroupfs-ng",
 	.attach = NULL,
-	.chown = NULL,
-	.mount_cgroup = NULL,
-	.nrtasks = NULL,
+	.chown = cgfsns_chown,
+	.mount_cgroup = cgfsng_mount,
+	.nrtasks = cgfsng_nrtasks,
 	.driver = CGFSNG,
 
 	/* unsupported */
