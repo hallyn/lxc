@@ -71,6 +71,7 @@ struct cgfsng_handler_data {
 	char *cgroup_use;
 	char *cgroup_pattern;
 	char *container_cgroup;
+	char *name;
 };
 
 static void free_controllers(char **clist)
@@ -137,6 +138,7 @@ static void free_handler_data(struct cgfsng_handler_data *d)
 	free(d->cgroup_use);
 	free(d->cgroup_pattern);
 	free(d->container_cgroup);
+	free(d->name);
 	free(d);
 }
 
@@ -491,6 +493,10 @@ static void *cgfsng_init(const char *name)
 	} while (!d);
 	memset(d, 0, sizeof(*d));
 
+	do {
+		d->name = strdup(name);
+	} while (!d->name);
+
 	errno = 0;
 	cgroup_use = lxc_global_config_value("lxc.cgroup.use");
 	if (!cgroup_use && errno != 0) {
@@ -649,9 +655,36 @@ struct cgroup_ops *cgfsng_ops_init(void)
 	return &cgfsng_ops;
 }
 
+static bool create_path_for_hierarchy(struct hierarchy *h, char *cgname)
+{
+	char *fullpath = must_make_path(h->mountpoint, cgname);
+	int ret;
+
+	ret = mkdir(fullpath, 0755);
+	free(fullpath);
+	return ret == 0;
+}
+
+static void remove_path_for_hierarchy(struct hierarchy *h, char *cgname)
+{
+	char *fullpath = must_make_path(h->mountpoint, cgname);
+
+	if (rmdir(fullpath) < 0)
+		SYSERROR("Failed to clean up cgroup %s from failed creation attempt", fullpath);
+	free(fullpath);
+}
+
+
+/*
+ * Try to create the same cgrou pin all hierarchies.
+ * Start with cgroup_pattern; next cgroup_pattern-1, -2, ..., -999
+ */
 static inline bool cgfsng_create(void *hdata)
 {
 	struct cgfsng_handler_data *d = hdata;
+	char *tmp, *cgname, *offset;
+	int i, idx = 0;
+	size_t len;
 
 	if (!d)
 		return false;
@@ -660,7 +693,38 @@ static inline bool cgfsng_create(void *hdata)
 		return false;
 	}
 
-	/* TODO - actually create */
+	tmp = lxc_string_replace("%n", d->name, d->cgroup_pattern);
+	if (!tmp) {
+		ERROR("Failed expanding cgroup name pattern");
+		return false;
+	}
+	len = strlen(tmp) + 5; // leave room for -NNN\0
+	do {
+		cgname = malloc(len);
+	} while (!cgname);
+	strcpy(cgname, tmp);
+	free(tmp);
+	offset = cgname + len - 4;
+
+again:
+	if (idx == 1000)
+		goto out_free;
+	if (idx)
+		snprintf(offset, 5, "-%d", idx);
+	for (i = 0; d->hierarchies[i]; i++) {
+		if (!create_path_for_hierarchy(d->hierarchies[i], cgname)) {
+			int j;
+			for (j = 0; j < i; j++)
+				remove_path_for_hierarchy(d->hierarchies[j], cgname);
+			idx++;
+			goto again;
+		}
+		/* Done */
+		d->container_cgroup = cgname;
+	}
+
+out_free:
+	free(cgname);
 	return false;
 }
 
