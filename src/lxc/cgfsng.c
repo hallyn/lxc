@@ -527,27 +527,33 @@ out_free:
 	return NULL;
 }
 
-static char *must_make_path(char *a, char *b)
+static char *must_make_path(const char *first, ...) __attribute__((sentinel));
+
+static char *must_make_path(const char *first, ...)
 {
-	char *dest;
-	size_t full_len = 0;
-	bool needslash;
-
-	if (!a || !b) {
-		ERROR("BUG: must_make_path: NULL argument");
-		exit(1);
-	}
-	needslash = b[0] != '/';
-
-	full_len = strlen(a) + strlen(b);
-	if (needslash)
-		full_len++;
+	va_list args;
+	char *cur, *dest;
+	size_t full_len = strlen(first);
 
 	do {
-		dest = malloc(full_len + 1);
+		dest = strdup(first);
 	} while (!dest);
 
-	snprintf(dest, full_len, "%s%s%s", a, needslash ? "/" : "", b);
+	va_start(args, first);
+	while ((cur = va_arg(args, char *)) != NULL) {
+		char *new;
+		full_len += strlen(cur);
+		if (cur[0] != '/')
+			full_len++;
+		do {
+			new = realloc(dest, full_len + 1);
+		} while (!new);
+		dest = new;
+		if (cur[0] != '/')
+			strcat(dest, "/");
+		strcat(dest, cur);
+	}
+	va_end(args);
 
 	return dest;
 }
@@ -573,7 +579,7 @@ static int cgroup_rmdir(char *dirname)
 		    !strcmp(direntp->d_name, ".."))
 			continue;
 
-		pathname = must_make_path(dirname, direntp->d_name);
+		pathname = must_make_path(dirname, direntp->d_name, NULL);
 
 		if (lstat(pathname, &mystat)) {
 			if (!r)
@@ -640,7 +646,7 @@ static void cgfsng_destroy(void *hdata, struct lxc_conf *conf)
 	if (d->container_cgroup && d->hierarchies) {
 		int i;
 		for (i = 0; d->hierarchies[i]; i++) {
-			char *fullpath = must_make_path(d->hierarchies[i]->mountpoint, d->container_cgroup);
+			char *fullpath = must_make_path(d->hierarchies[i]->mountpoint, d->container_cgroup, NULL);
 
 			recursive_destroy(fullpath, conf);
 			free(fullpath);
@@ -657,7 +663,7 @@ struct cgroup_ops *cgfsng_ops_init(void)
 
 static bool create_path_for_hierarchy(struct hierarchy *h, char *cgname)
 {
-	char *fullpath = must_make_path(h->mountpoint, cgname);
+	char *fullpath = must_make_path(h->mountpoint, cgname, NULL);
 	int ret;
 
 	ret = mkdir(fullpath, 0755);
@@ -667,7 +673,7 @@ static bool create_path_for_hierarchy(struct hierarchy *h, char *cgname)
 
 static void remove_path_for_hierarchy(struct hierarchy *h, char *cgname)
 {
-	char *fullpath = must_make_path(h->mountpoint, cgname);
+	char *fullpath = must_make_path(h->mountpoint, cgname, NULL);
 
 	if (rmdir(fullpath) < 0)
 		SYSERROR("Failed to clean up cgroup %s from failed creation attempt", fullpath);
@@ -735,11 +741,33 @@ static const char *cgfsng_canonical_path(void *hdata)
 	return d->container_cgroup;
 }
 
+static bool cgfsng_enter(void *hdata, pid_t pid)
+{
+	struct cgfsng_handler_data *d = hdata;
+	char pidstr[25];
+	int i, len;
+
+	len = snprintf(pidstr, 25, "%d", pid);
+	if (len < 0 || len > 25)
+		return false;
+
+	for (i = 0; d->hierarchies[i]; i++) {
+		// todo - handle cgroup.procs for legacy
+		char *fullpath = must_make_path(d->hierarchies[i]->mountpoint, d->container_cgroup, "tasks", NULL);
+		if (lxc_write_to_file(fullpath, pidstr, len, false) != len) {
+			ERROR("Failed to enter %s\n", fullpath);
+			return false;
+		}
+	}
+
+	return true;
+}
+
 static struct cgroup_ops cgfsng_ops = {
 	.init = cgfsng_init,
 	.destroy = cgfsng_destroy,
 	.create = cgfsng_create,
-	.enter = NULL,
+	.enter = cgfsng_enter,
 	.canonical_path = cgfsng_canonical_path,
 	.escape = NULL,
 	.get_cgroup = NULL,
