@@ -38,6 +38,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <grp.h>
 
 #include "log.h"
 #include "cgroup.h"
@@ -55,19 +59,18 @@ static struct cgroup_ops cgfsng_ops;
  *   /sys/fs/cgroup/controller or /sys/fs/cgroup/controllerlist
  * @monitor_cgroup: the cgroup in which the lxc monitor lived
  *   at container start for this hierarchy
- * @container_cgroup: the cgroup in which the container is started
  */
 struct hierarchy {
 	char **controllers;
 	char *mountpoint;
 	char *monitor_cgroup;
-	char *container_cgroup;
 };
 
 struct cgfsng_handler_data {
 	struct hierarchy **hierarchies;
 	char *cgroup_use;
 	char *cgroup_pattern;
+	char *container_cgroup;
 };
 
 static void free_controllers(char **clist)
@@ -133,6 +136,7 @@ static void free_handler_data(struct cgfsng_handler_data *d)
 	free_hierarchies(d->hierarchies);
 	free(d->cgroup_use);
 	free(d->cgroup_pattern);
+	free(d->container_cgroup);
 	free(d);
 }
 
@@ -278,8 +282,7 @@ static bool is_cgroupfs(char *line)
 }
 
 static void add_controller(struct cgfsng_handler_data *d, char **clist,
-			   char *mountpoint, char *monitor_cgroup,
-			   char *container_cgroup)
+			   char *mountpoint, char *monitor_cgroup)
 {
 	struct hierarchy *new;
 
@@ -289,7 +292,6 @@ static void add_controller(struct cgfsng_handler_data *d, char **clist,
 	new->controllers = clist;
 	new->mountpoint = mountpoint;
 	new->monitor_cgroup = monitor_cgroup;
-	new->container_cgroup = container_cgroup;
 }
 
 static char *get_mountpoint(char *line)
@@ -347,7 +349,7 @@ static bool parse_hierarchies(struct cgfsng_handler_data *d)
 			free(mountpoint);
 			continue;
 		}
-		add_controller(d, controller_list, mountpoint, monitor_cgroup, NULL);
+		add_controller(d, controller_list, mountpoint, monitor_cgroup);
 	}
 
 	fclose(f);
@@ -402,6 +404,109 @@ out_free:
 	return NULL;
 }
 
+static char *must_make_path(char *a, char *b)
+{
+	char *dest;
+	size_t full_len = 0;
+	bool needslash;
+
+	if (!a || !b) {
+		ERROR("BUG: must_make_path: NULL argument");
+		exit(1);
+	}
+	needslash = b[0] != '/';
+
+	full_len = strlen(a) + strlen(b);
+	if (needslash)
+		full_len++;
+
+	do {
+		dest = malloc(full_len + 1);
+	} while (!dest);
+
+	snprintf(dest, full_len, "%s%s%s", a, needslash ? "/" : "", b);
+
+	return dest;
+}
+
+static int cgroup_rmdir(char *dirname)
+{
+	struct dirent dirent, *direntp;
+	DIR *dir;
+	int r = 0;
+
+	dir = opendir(dirname);
+	if (!dir)
+		return -1;
+
+	while (!readdir_r(dir, &dirent, &direntp)) {
+		struct stat mystat;
+		char *pathname;
+
+		if (!direntp)
+			break;
+
+		if (!strcmp(direntp->d_name, ".") ||
+		    !strcmp(direntp->d_name, ".."))
+			continue;
+
+		pathname = must_make_path(dirname, direntp->d_name);
+
+		if (lstat(pathname, &mystat)) {
+			if (!r)
+				WARN("failed to stat %s\n", pathname);
+			r = -1;
+			goto next;
+		}
+
+		if (!S_ISDIR(mystat.st_mode))
+			goto next;
+		if (cgroup_rmdir(pathname) < 0)
+			r = -1;
+next:
+		free(pathname);
+	}
+
+	if (rmdir(dirname) < 0) {
+		if (!r)
+			WARN("%s: failed to delete %s: %m", __func__, dirname);
+		r = -1;
+	}
+
+	if (closedir(dir) < 0) {
+		if (!r)
+			WARN("%s: failed to delete %s: %m", __func__, dirname);
+		r = -1;
+	}
+	return r;
+}
+
+static int rmdir_wrapper(void *data)
+{
+	char *path = data;
+
+	if (setresgid(0,0,0) < 0)
+		SYSERROR("Failed to setgid to 0");
+	if (setresuid(0,0,0) < 0)
+		SYSERROR("Failed to setuid to 0");
+	if (setgroups(0, NULL) < 0)
+		SYSERROR("Failed to clear groups");
+
+	return cgroup_rmdir(path);
+}
+
+void recursive_destroy(char *path, struct lxc_conf *conf)
+{
+	int r;
+	if (conf && !lxc_list_empty(&conf->id_map))
+		r = userns_exec_1(conf, rmdir_wrapper, path);
+	else
+		r = cgroup_rmdir(path);
+
+	if (r < 0)
+		ERROR("Error destroying %s\n", path);
+}
+
 static void cgfsng_destroy(void *hdata, struct lxc_conf *conf)
 {
 	struct cgfsng_handler_data *d = hdata;
@@ -409,7 +514,15 @@ static void cgfsng_destroy(void *hdata, struct lxc_conf *conf)
 	if (!d)
 		return;
 
-	/* TODO remove any created cgroups */
+	if (d->container_cgroup && d->hierarchies) {
+		int i;
+		for (i = 0; d->hierarchies[i]; i++) {
+			char *fullpath = must_make_path(d->hierarchies[i]->mountpoint, d->container_cgroup);
+
+			recursive_destroy(fullpath, conf);
+			free(fullpath);
+		}
+	}
 
 	free_handler_data(d);
 }
@@ -419,14 +532,36 @@ struct cgroup_ops *cgfsng_ops_init(void)
 	return &cgfsng_ops;
 }
 
+static inline bool cgfsng_create(void *hdata)
+{
+	struct cgfsng_handler_data *d = hdata;
+
+	if (!d)
+		return false;
+	if (d->container_cgroup) {
+		WARN("cgfsng_create called a second time");
+		return false;
+	}
+
+	/* TODO - actually create */
+	return false;
+}
+
+static const char *cgfsng_canonical_path(void *hdata)
+{
+	struct cgfsng_handler_data *d = hdata;
+
+	return d->container_cgroup;
+}
+
 static struct cgroup_ops cgfsng_ops = {
 	.init = cgfsng_init,
 	.destroy = cgfsng_destroy,
-	.create = NULL,
+	.create = cgfsng_create,
 	.enter = NULL,
-	.create_legacy = NULL,
-	.canonical_path = NULL,
+	.canonical_path = cgfsng_canonical_path,
 	.escape = NULL,
+	.get_cgroup = NULL,
 	.get = NULL,
 	.set = NULL,
 	.unfreeze = NULL,
@@ -439,5 +574,5 @@ static struct cgroup_ops cgfsng_ops = {
 	.driver = CGFSNG,
 
 	/* unsupported */
-	.get_cgroup = NULL,
+	.create_legacy = NULL,
 };
