@@ -35,6 +35,7 @@ struct lxc_list;
 typedef enum {
 	CGFS,
 	CGMANAGER,
+	CGFSNG,
 } cgroup_driver_t;
 
 struct cgroup_ops {

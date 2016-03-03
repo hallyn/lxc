@@ -34,6 +34,7 @@ lxc_log_define(lxc_cgroup, lxc);
 static struct cgroup_ops *ops = NULL;
 
 extern struct cgroup_ops *cgfs_ops_init(void);
+extern struct cgroup_ops *cgfsng_ops_init(void);
 extern struct cgroup_ops *cgm_ops_init(void);
 
 __attribute__((constructor))
@@ -45,8 +46,10 @@ void cgroup_ops_init(void)
 	}
 
 	DEBUG("cgroup_init");
+	ops = cgfsng_ops_init();
 	#if HAVE_CGMANAGER
-	ops = cgm_ops_init();
+	if (!ops)
+		ops = cgm_ops_init();
 	#endif
 	if (!ops)
 		ops = cgfs_ops_init();
