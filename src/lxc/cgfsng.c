@@ -296,21 +296,136 @@ static void add_controller(struct cgfsng_handler_data *d, char **clist,
 
 static char *get_mountpoint(char *line)
 {
-	/* TODO */
-	return NULL;
+	int i;
+	char *p = line, *p2, *sret;
+	size_t len;
+
+	for (i = 0; i < 3; i++) {
+		p = index(p, ' ');
+		if (!p)
+			return NULL;
+		p++;
+	}
+	p2 = index(p, ' ');
+	if (!p2)
+		return NULL;
+	len = p2 - p;
+	do {
+		sret = malloc(len + 1);
+	} while (!sret);
+	memcpy(sret, p, len);
+	sret[len] = '\0';
+	return sret;
 }
 
-static char *get_current_cgroup(char *controller)
+static char *copy_to_eol(char *p)
 {
-	/* TODO */
-	return NULL;
+	char *p2 = index(p, '\n'), *sret;
+	size_t len;
+
+	if (!p2)
+		return NULL;
+	
+	len = p2 - p;
+	do {
+		sret = malloc(len + 1);
+	} while (!sret);
+	memcpy(sret, p2, len);
+	sret[len] = '\0';
+	return sret;
+}
+
+/*
+ * cgline: pointer to character after the first ':' in a line in a
+ * \n-terminated /proc/self/cgroup file. Check whether * controller c is
+ * present.
+ */
+static bool controller_in_clist(char *cgline, char *c)
+{
+	char *tok, *saveptr = NULL, *eol, *tmp;
+	size_t len;
+
+	eol = index(cgline, ':');
+	if (!eol)
+		return false;
+
+	len = eol - cgline;
+	tmp = alloca(len + 1);
+	memcpy(tmp, cgline, len);
+	tmp[len] = '\0';
+
+	for (tok = strtok_r(tmp, ",", &saveptr); tok;
+			tok = strtok_r(NULL, ",", &saveptr)) {
+		if (strcmp(tok, c) == 0)
+			return true;
+	}
+	return false;
+}
+
+static char *get_current_cgroup(char *selfcgroup, char *controller)
+{
+	char *p = selfcgroup;
+
+	while (1) {
+		p = index(p, ':');
+		if (!p)
+			return NULL;
+		p++;
+		if (controller_in_clist(p, controller)) {
+			p = index(p, ':');
+			if (!p)
+				return NULL;
+			p++;
+			return copy_to_eol(p);
+		}
+
+		p = index(p, '\n');
+		if (!p)
+			return NULL;
+		p++;
+	}
+}
+
+static char *read_file(char *fnam)
+{
+	FILE *f;
+	long flen;
+	char *buf;
+
+	f = fopen(fnam, "r");
+	if (!f)
+		return NULL;
+	if (fseek(f, 0, SEEK_END) < 0) {
+		fclose(f);
+		return NULL;
+	}
+	if ((flen = ftell(f)) < 0) {
+		fclose(f);
+		return NULL;
+	}
+	do {
+		buf = malloc(flen+1);
+	} while (!buf);
+	buf[flen] = '\0';
+	if (fread(buf, 1, flen, f) != flen) {
+		fclose(f);
+		free(buf);
+		return NULL;
+	}
+	fclose(f);
+	return buf;
 }
 
 static bool parse_hierarchies(struct cgfsng_handler_data *d)
 {
 	FILE *f;
-	char * line = NULL;
+	char * line = NULL, *selfcgroup;
 	size_t len = 0;
+
+	selfcgroup = read_file("/proc/self/cgroup");
+	if (!selfcgroup)
+		return false;
+
 	if ((f = fopen("/proc/self/mountinfo", "r")) == NULL) {
 		ERROR("Failed opening /proc/self/mountinfo");
 		return false;
@@ -342,7 +457,7 @@ static bool parse_hierarchies(struct cgfsng_handler_data *d)
 			continue;
 		}
 
-		monitor_cgroup = get_current_cgroup(controller_list[0]);
+		monitor_cgroup = get_current_cgroup(selfcgroup, controller_list[0]);
 		if (!monitor_cgroup) {
 			ERROR("Failed to find current cgroup for controller '%s'", controller_list[0]);
 			free_controllers(controller_list);
@@ -351,6 +466,8 @@ static bool parse_hierarchies(struct cgfsng_handler_data *d)
 		}
 		add_controller(d, controller_list, mountpoint, monitor_cgroup);
 	}
+
+	free(selfcgroup);
 
 	fclose(f);
 	free(line);
