@@ -1350,6 +1350,10 @@ static int cgfsng_set(const char *filename, const char *value, const char *name,
 	return ret;
 }
 
+/*
+ * Check whether a container already has a particular rule, as otherwise
+ * may end up with spurious permission errors.
+ */
 static bool cgroup_devices_has_allow_or_deny(struct cgfsng_handler_data *d,
 					     char *v, bool for_allow, char *path)
 {
@@ -1358,6 +1362,8 @@ static bool cgroup_devices_has_allow_or_deny(struct cgfsng_handler_data *d,
 	size_t sz = 0;
 	bool ret = !for_allow;
 
+	/* if it's a deny rule and container has all devices, then it doesn't
+	 * yet have the deny rule */
 	if (!for_allow && strcmp(v, "a") != 0 && strcmp(v, "a *:* rwm") != 0)
 		return false;
 
@@ -1372,9 +1378,14 @@ static bool cgroup_devices_has_allow_or_deny(struct cgfsng_handler_data *d,
 		if (len > 0 && line[len-1] == '\n')
 			line[len-1] = '\0';
 		if (strcmp(line, "a *:* rwm") == 0) {
+			/* if container has all access and we're adding allow rule,
+			 * then already has it; if it has all access and we're
+			 * adding a deny rule, then it does not. */
 			ret = for_allow;
 			goto out;
 		} else if (for_allow && strcmp(line, v) == 0) {
+			/* if the line is there verbatim and it is an
+			 * allow rule, then it already has it */
 			ret = true;
 			goto out;
 		}
