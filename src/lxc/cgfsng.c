@@ -48,6 +48,13 @@
 #include "utils.h"
 #include "commands.h"
 
+/*
+ * TODO
+ * . implement nrtasks, or just refuse to run if it's needed (very old kernels)
+ * . setup_limits - do we need the check for devices limits?
+ * . go through page by page looking for things not being freed
+ * . switch over to lxc_string and lxc_array helpers from utils.c?
+ */
 lxc_log_define(lxc_cgfsng, lxc);
 
 static struct cgroup_ops cgfsng_ops;
@@ -926,6 +933,9 @@ static void cgfsng_destroy(void *hdata, struct lxc_conf *conf)
 
 struct cgroup_ops *cgfsng_ops_init(void)
 {
+	/* TODO - when cgroup_mount is implemented, drop this check */
+	if (!file_exists("/proc/self/ns/cgroup"))
+		return NULL;
 	return &cgfsng_ops;
 }
 
@@ -978,7 +988,7 @@ static inline bool cgfsng_create(void *hdata)
 	} while (!cgname);
 	strcpy(cgname, tmp);
 	free(tmp);
-	offset = cgname + len - 4;
+	offset = cgname + len - 5;
 
 again:
 	if (idx == 1000)
@@ -993,9 +1003,10 @@ again:
 			idx++;
 			goto again;
 		}
-		/* Done */
-		d->container_cgroup = cgname;
 	}
+	/* Done */
+	d->container_cgroup = cgname;
+	return true;
 
 out_free:
 	free(cgname);
@@ -1203,6 +1214,11 @@ static bool cgfsng_attach(const char *name, const char *lxcpath, pid_t pid)
 	return true;
 }
 
+/*
+ * Called externally (i.e. from 'lxc-cgroup') to query cgroup limits.
+ * Here we don't have a cgroup_data set up, so we ask the running
+ * container through the commands API for the cgroup path
+ */
 static int cgfsng_get(const char *filename, char *value, size_t len, const char *name, const char *lxcpath)
 {
 	char *subsystem, *p, *path;
@@ -1228,13 +1244,183 @@ static int cgfsng_get(const char *filename, char *value, size_t len, const char 
 	h = get_hierarchy(d, subsystem);
 	if (h) {
 		char *fullpath = must_make_path(h->mountpoint, path, filename, NULL);
-		printf("looking at %s\n", fullpath);
+#if SERGEDEBUG
+		printf("get: looking at %s\n", fullpath);
+#endif
 		ret = lxc_read_from_file(fullpath, value, len);
 	}
 
 	free_handler_data(d);
 	free(path);
 	
+	return ret;
+}
+
+/*
+ * Called externally (i.e. from 'lxc-cgroup') to set new cgroup limits.
+ * Here we don't have a cgroup_data set up, so we ask the running
+ * container through the commands API for the cgroup path
+ */
+static int cgfsng_set(const char *filename, const char *value, const char *name, const char *lxcpath)
+{
+	char *subsystem, *p, *path;
+	struct cgfsng_handler_data *d;
+	struct hierarchy *h;
+	int ret = -1;
+
+	subsystem = alloca(strlen(filename) + 1);
+	strcpy(subsystem, filename);
+	if ((p = strchr(subsystem, '.')) != NULL)
+		*p = '\0';
+
+	path = lxc_cmd_get_cgroup_path(name, lxcpath, subsystem);
+	if (!path) // not running
+		return -1;
+
+	d = cgfsng_init(name);
+	if (!d) {
+		free(path);
+		return false;
+	}
+
+	h = get_hierarchy(d, subsystem);
+	if (h) {
+		char *fullpath = must_make_path(h->mountpoint, path, filename, NULL);
+#if SERGEDEBUG
+		printf("set: looking at %s\n", fullpath);
+#endif
+		ret = lxc_write_to_file(fullpath, value, strlen(value), false);
+		free(fullpath);
+	}
+
+	free_handler_data(d);
+	free(path);
+	
+	return ret;
+}
+
+static bool cgroup_devices_has_allow_or_deny(struct cgfsng_handler_data *d,
+					     char *v, bool for_allow, char *path)
+{
+	FILE *devices_list;
+	char *line = NULL;
+	size_t sz = 0;
+	bool ret = !for_allow;
+
+	if (!for_allow && strcmp(v, "a") != 0 && strcmp(v, "a *:* rwm") != 0)
+		return false;
+
+	devices_list = fopen_cloexec(path, "r");
+	if (!devices_list) {
+		free(path);
+		return false;
+	}
+
+	while (getline(&line, &sz, devices_list) != -1) {
+		size_t len = strlen(line);
+		if (len > 0 && line[len-1] == '\n')
+			line[len-1] = '\0';
+		if (strcmp(line, "a *:* rwm") == 0) {
+			ret = for_allow;
+			goto out;
+		} else if (for_allow && strcmp(line, v) == 0) {
+			ret = true;
+			goto out;
+		}
+	}
+
+out:
+	fclose(devices_list);
+	free(line);
+	return ret;
+}
+
+/*
+ * Called from setup_limits - here we have the container's cgroup_data because
+ * we created the cgroups
+ */
+static int lxc_cgroup_set_data(const char *filename, const char *value, struct cgfsng_handler_data *d)
+{
+	char *subsystem = NULL, *p;
+	int ret = -1;
+	struct hierarchy *h;
+
+	subsystem = alloca(strlen(filename) + 1);
+	strcpy(subsystem, filename);
+	if ((p = strchr(subsystem, '.')) != NULL)
+		*p = '\0';
+
+	h = get_hierarchy(d, subsystem);
+	if (h) {
+		char *fullpath = must_make_path(h->mountpoint, d->container_cgroup, filename, NULL);
+#if SERGEDEBUG
+		printf("set_data: looking at %s\n", fullpath);
+#endif
+		ret = lxc_write_to_file(fullpath, value, strlen(value), false);
+		free(fullpath);
+	}
+	return ret;
+}
+
+static bool cgfsng_setup_limits(void *hdata, struct lxc_list *cgroup_settings,
+				  bool do_devices)
+{
+	struct cgfsng_handler_data *d = hdata;
+	struct lxc_list *iterator, *sorted_cgroup_settings, *next;
+	struct lxc_cgroup *cg;
+	struct hierarchy *h;
+	char *listpath;
+	bool ret = false;
+
+	if (lxc_list_empty(cgroup_settings))
+		return true;
+
+	sorted_cgroup_settings = sort_cgroup_settings(cgroup_settings);
+	if (!sorted_cgroup_settings) {
+		return false;
+	}
+
+	h = get_hierarchy(d, "devices");
+	if (!h) {
+		ERROR("No devices cgroup setup for %s\n", d->name);
+		return false;
+	}
+	listpath = must_make_path(h->mountpoint, d->container_cgroup, "devices.list", NULL);
+
+	lxc_list_for_each(iterator, sorted_cgroup_settings) {
+		cg = iterator->elem;
+
+		if (do_devices == !strncmp("devices", cg->subsystem, 7)) {
+			if (strcmp(cg->subsystem, "devices.deny") == 0 &&
+					cgroup_devices_has_allow_or_deny(d, cg->value, false, listpath))
+				continue;
+			if (strcmp(cg->subsystem, "devices.allow") == 0 &&
+					cgroup_devices_has_allow_or_deny(d, cg->value, true, listpath))
+				continue;
+			if (lxc_cgroup_set_data(cg->subsystem, cg->value, d)) {
+				if (do_devices && (errno == EACCES || errno == EPERM)) {
+					WARN("Error setting %s to %s for %s",
+					      cg->subsystem, cg->value, d->name);
+					continue;
+				}
+				SYSERROR("Error setting %s to %s for %s",
+				      cg->subsystem, cg->value, d->name);
+				goto out;
+			}
+		}
+
+		DEBUG("cgroup '%s' set to '%s'", cg->subsystem, cg->value);
+	}
+
+	ret = true;
+	INFO("cgroup has been setup");
+out:
+	free(listpath);
+	lxc_list_for_each_safe(iterator, sorted_cgroup_settings, next) {
+		lxc_list_del(iterator);
+		free(iterator);
+	}
+	free(sorted_cgroup_settings);
 	return ret;
 }
 
@@ -1247,9 +1433,9 @@ static struct cgroup_ops cgfsng_ops = {
 	.escape = cgfsng_escape,
 	.get_cgroup = cgfsng_get_cgroup,
 	.get = cgfsng_get,
-	.set = NULL,
+	.set = cgfsng_set,
 	.unfreeze = cgfsng_unfreeze,
-	.setup_limits = NULL,
+	.setup_limits = cgfsng_setup_limits,
 	.name = "cgroupfs-ng",
 	.attach = cgfsng_attach,
 	.chown = cgfsns_chown,
