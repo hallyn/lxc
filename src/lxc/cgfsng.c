@@ -50,7 +50,6 @@
 
 /*
  * TODO
- * . setup_limits - do we need the check for devices limits?
  * . go through page by page looking for things not being freed
  * . switch over to lxc_string and lxc_array helpers from utils.c?
  */
@@ -108,48 +107,66 @@ static void free_string_list(char **clist)
 	}
 }
 
-static char *must_copy_string(char *entry)
+/* Re-alllocate a pointer, do not fail */
+static void *must_realloc(void *orig, size_t sz)
+{
+	void *ret;
+
+	do {
+		ret = realloc(orig, sz);
+	} while (!ret);
+	return ret;
+}
+
+/* Allocate a pointer, do not fail */
+static void *must_alloc(size_t sz)
+{
+	return must_realloc(NULL, sz);
+}
+
+/* return copy of string @entry;  do not fail. */
+static char *must_copy_string(const char *entry)
 {
 	char *ret;
 
+	if (!entry)
+		return NULL;
 	do {
 		ret = strdup(entry);
 	} while (!ret);
 	return ret;
 }
 
+/*
+ * This is a special case - return a copy of @entry
+ * prepending 'name='.  I.e. turn systemd into name=systemd.
+ * Do not fail.
+ */
 static char *must_prefix_named(char *entry)
 {
 	char *ret;
 	size_t len = strlen(entry);
 
-	do {
-		ret = malloc(len + 6);
-	} while (!ret);
+	ret = must_alloc(len + 6);
 	snprintf(ret, len + 6, "name=%s", entry);
 	return ret;
 }
 
+/*
+ * Given a pointer to a null-terminated array of pointers, realloc to
+ * add one entry, and point the new entry to NULL.  Do not fail.  Return
+ * the index to the second-to-last entry - that is, the one which is
+ * now available for use (keeping the list null-terminated).
+ */
 static int append_null_to_list(void ***list)
 {
-	int newentry;
+	int newentry = 0;
 
-	if (!*list) {
-		do {
-			*list = malloc(2 * sizeof(void **));
-		} while (!*list);
-		newentry = 0;
-		(*list)[1] = NULL;
-	} else {
-		void **tmp;
-		for (newentry = 0; (*list)[newentry]; newentry++);
-		do {
-			tmp = realloc((*list), (newentry + 2) * sizeof(void **));
-		} while (!tmp);
-		tmp[newentry + 1] = NULL;
-		*list = tmp;
-	}
+	if (*list)
+		for (; (*list)[newentry]; newentry++);
 
+	*list = must_realloc(*list, (newentry + 2) * sizeof(void **));
+	(*list)[newentry + 1] = NULL;
 	return newentry;
 }
 
@@ -286,8 +303,6 @@ static bool controller_list_is_dup(struct hierarchy **hlist, char **clist)
 /*
  * Return true if the controller @entry is found in the null-terminated
  * list of hierarchies @hlist
- *
- * TODO - we need to deal with name= somehow
  */
 static bool controller_found(struct hierarchy **hlist, char *entry)
 {
@@ -332,24 +347,6 @@ static bool all_controllers_found(struct cgfsng_handler_data *d)
 	return true;
 }
 
-/*
- * Return true if the mountpoint is under /sys/fs/cgroup/
- */
-static bool is_cgroup_mountinfo_line(char *line)
-{
-	int i;
-	char *p = line;
-
-	for (i = 0; i < 4; i++) {
-		p = index(p, ' ');
-		if (!p)
-			return false;
-		p++;
-	}
-
-	return strncmp(p, "/sys/fs/cgroup/", 15) == 0;
-}
-
 /* Return true if the fs type is fuse.lxcfs */
 static bool is_lxcfs(const char *line)
 {
@@ -376,13 +373,15 @@ static char **get_controllers(char **klist, char **nlist, char *line)
 	for (i = 0; i < 4; i++) {
 		p = index(p, ' ');
 		if (!p)
-			goto out_free;
+			return NULL;
 		p++;
 	}
 	if (!p)
-		goto out_free;
+		return NULL;
+	/* note - if we change how mountinfo works, then our caller
+	 * will need to verify /sys/fs/cgroup/ in this field */
 	if (strncmp(p, "/sys/fs/cgroup/", 15) != 0)
-		goto out_free;
+		return NULL;
 	p += 15;
 	p2 = index(p, ' ');
 	if (!p2) {
@@ -396,10 +395,6 @@ static char **get_controllers(char **klist, char **nlist, char *line)
 	}
 
 	return aret;
-
-out_free:
-	free_string_list(aret);
-	return NULL;
 }
 
 /* return true if the fstype is cgroup */
@@ -418,9 +413,7 @@ static void add_controller(struct cgfsng_handler_data *d, char **clist,
 	struct hierarchy *new;
 	int newentry;
 
-	do {
-		new = malloc(sizeof(*new));
-	} while (!new);
+	new = must_alloc(sizeof(*new));
 	new->controllers = clist;
 	new->mountpoint = mountpoint;
 	new->base_cgroup = base_cgroup;
@@ -447,9 +440,7 @@ static char *get_mountpoint(char *line)
 	}
 	/* we've already stuck a \0 after the mountpoint */
 	len = strlen(p);
-	do {
-		sret = malloc(len + 1);
-	} while (!sret);
+	sret = must_alloc(len + 1);
 	memcpy(sret, p, len);
 	sret[len] = '\0';
 	return sret;
@@ -468,9 +459,7 @@ static char *copy_to_eol(char *p)
 		return NULL;
 	
 	len = p2 - p;
-	do {
-		sret = malloc(len + 1);
-	} while (!sret);
+	sret = must_alloc(len + 1);
 	memcpy(sret, p, len);
 	sret[len] = '\0';
 	return sret;
@@ -534,14 +523,10 @@ static char *get_current_cgroup(char *basecginfo, char *controller)
 static void append_line(char **dest, size_t oldlen, char *new, size_t newlen)
 {
 	size_t full = oldlen + newlen;
-	char *tmp;
 
-	do {
-		tmp = realloc(*dest, full + 1);
-	} while (!tmp);
-	*dest = tmp;
+	*dest = must_realloc(*dest, full + 1);
 
-	strcat(tmp, new);
+	strcat(*dest, new);
 }
 
 /* Slurp in a whole file */
@@ -584,9 +569,7 @@ static void must_append_string(char ***list, char *entry)
 	int newentry = append_null_to_list((void ***)list);
 	char *copy;
 
-	do {
-		copy = strdup(entry);
-	} while (!*copy);
+	copy = must_copy_string(entry);
 	(*list)[newentry] = copy;
 }
 
@@ -694,9 +677,6 @@ static bool parse_hierarchies(struct cgfsng_handler_data *d)
 		char **controller_list = NULL;
 		char *mountpoint, *base_cgroup;
 
-		if (!is_cgroup_mountinfo_line(line))
-			continue;
-
 		if (!is_lxcfs(line) && !is_cgroupfs(line))
 			continue;
 
@@ -758,34 +738,25 @@ static void *cgfsng_init(const char *name)
 	struct cgfsng_handler_data *d;
 	const char *cgroup_use, *cgroup_pattern;
 
-	do {
-		d = malloc(sizeof(*d));
-	} while (!d);
+	d = must_alloc(sizeof(*d));
 	memset(d, 0, sizeof(*d));
 
-	do {
-		d->name = strdup(name);
-	} while (!d->name);
+	d->name = must_copy_string(name);
 
 	errno = 0;
 	cgroup_use = lxc_global_config_value("lxc.cgroup.use");
-	if (!cgroup_use && errno != 0) {
+	if (!cgroup_use && errno != 0) { // lxc.cgroup.use can be NULL
 		SYSERROR("Error reading list of cgroups to use");
 		goto out_free;
 	}
-	if (cgroup_use) do {
-		d->cgroup_use = strdup(cgroup_use);
-	} while (!d->cgroup_use);
+	d->cgroup_use = must_copy_string(cgroup_use);
+
 	cgroup_pattern = lxc_global_config_value("lxc.cgroup.pattern");
-	if (!cgroup_pattern) {
-		// Note that lxc_global_config_value fills this in if needed,
-		// so this should never be NULL.
+	if (!cgroup_pattern) { // lxc.cgroup.pattern is only NULL on error
 		ERROR("Error getting cgroup pattern");
 		goto out_free;
 	}
-	do {
-		d->cgroup_pattern = strdup(cgroup_pattern);
-	} while (!d->cgroup_pattern);
+	d->cgroup_pattern = must_copy_string(cgroup_pattern);
 
 	if (!parse_hierarchies(d))
 		goto out_free;
@@ -809,20 +780,14 @@ static char *must_make_path(const char *first, ...)
 	char *cur, *dest;
 	size_t full_len = strlen(first);
 
-	do {
-		dest = strdup(first);
-	} while (!dest);
+	dest = must_copy_string(first);
 
 	va_start(args, first);
 	while ((cur = va_arg(args, char *)) != NULL) {
-		char *new;
 		full_len += strlen(cur);
 		if (cur[0] != '/')
 			full_len++;
-		do {
-			new = realloc(dest, full_len + 1);
-		} while (!new);
-		dest = new;
+		dest = must_realloc(dest, full_len + 1);
 		if (cur[0] != '/')
 			strcat(dest, "/");
 		strcat(dest, cur);
@@ -982,9 +947,7 @@ static inline bool cgfsng_create(void *hdata)
 		return false;
 	}
 	len = strlen(tmp) + 5; // leave room for -NNN\0
-	do {
-		cgname = malloc(len);
-	} while (!cgname);
+	cgname = must_alloc(len);
 	strcpy(cgname, tmp);
 	free(tmp);
 	offset = cgname + len - 5;
