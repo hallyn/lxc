@@ -46,10 +46,13 @@
 #include "log.h"
 #include "cgroup.h"
 #include "utils.h"
+#include "commands.h"
 
 lxc_log_define(lxc_cgfsng, lxc);
 
 static struct cgroup_ops cgfsng_ops;
+
+#define SERGEDEBUG 1
 
 /*
  * A descriptor for a mounted hierarchy
@@ -88,7 +91,7 @@ struct cgfsng_handler_data {
 	char *name; // container name
 };
 
-static void free_controllers(char **clist)
+static void free_string_list(char **clist)
 {
 	if (clist) {
 		int i;
@@ -99,36 +102,101 @@ static void free_controllers(char **clist)
 	}
 }
 
+static char *must_copy_string(char *entry)
+{
+	char *ret;
+
+	do {
+		ret = strdup(entry);
+	} while (!ret);
+	return ret;
+}
+
+static char *must_prefix_named(char *entry)
+{
+	char *ret;
+	size_t len = strlen(entry);
+
+	do {
+		ret = malloc(len + 6);
+	} while (!ret);
+	snprintf(ret, len + 6, "name=%s", entry);
+	return ret;
+}
+
+static int append_null_to_list(void ***list)
+{
+	int newentry;
+
+	if (!*list) {
+		do {
+			*list = malloc(2 * sizeof(void **));
+		} while (!*list);
+		newentry = 0;
+		(*list)[1] = NULL;
+	} else {
+		void **tmp;
+		for (newentry = 0; (*list)[newentry]; newentry++);
+		do {
+			tmp = realloc((*list), (newentry + 2) * sizeof(void **));
+		} while (!tmp);
+		tmp[newentry + 1] = NULL;
+		*list = tmp;
+	}
+
+	return newentry;
+}
+
+/*
+ * Given a null-terminated array of strings, check whether @entry
+ * is one of the strings
+ */
+static bool string_in_list(char **list, char *entry)
+{
+	int i;
+
+	if (!list)
+		return false;
+	for (i = 0; list[i]; i++)
+		if (strcmp(list[i], entry) == 0)
+			return true;
+
+	return false;
+}
+
 /*
  * append an entry to the clist.  Do not fail.
  * *clist must be NULL the first time we are called.
  *
+ * We also handle named subsystems here.  Any controller which is not a
+ * kernel subsystem, we prefix 'name='.  Any which is both a kernel and
+ * named subsystem, we refuse to use because we're not sure which we
+ * have here.  (TODO - we could work around this in some cases by just
+ * remounting to be unambiguous, or by comparing mountpoint contents
+ * with current cgroup)
+ *
  * The last entry will always be NULL.
  */
-static void must_append_controller(char ***clist, char *entry)
+static void must_append_controller(char **klist, char **nlist, char ***clist, char *entry)
 {
 	int newentry;
 	char *copy;
 
-	if (!*clist) {
-		do {
-			*clist = malloc(2 * sizeof(char **));
-		} while (!*clist);
-		newentry = 0;
-		(*clist)[1] = NULL;
-	} else {
-		char **tmp;
-		for (newentry = 0; (*clist)[newentry]; newentry++);
-		do {
-			tmp = realloc((*clist), (newentry + 1) * sizeof(char **));
-		} while (!tmp);
-		tmp[newentry + 1] = NULL;
-		*clist = tmp;
+	if (string_in_list(klist, entry) && string_in_list(nlist, entry)) {
+		ERROR("Refusing to use ambiguous controller '%s'", entry);
+		ERROR("It is both a named and kernel subsystem");
+		return;
 	}
 
-	do {
-		copy = strdup(entry);
-	} while (!copy);
+	newentry = append_null_to_list((void ***)clist);
+
+	if (strncmp(entry, "name=", 5) == 0)
+		copy = must_copy_string(entry);
+	else if (string_in_list(klist, entry))
+		copy = must_copy_string(entry);
+	else
+		copy = must_prefix_named(entry);
+		
 	(*clist)[newentry] = copy;
 }
 
@@ -140,7 +208,7 @@ static void free_hierarchies(struct hierarchy **hlist)
 		for (i = 0; hlist[i]; i++) {
 			free(hlist[i]->mountpoint);
 			free(hlist[i]->base_cgroup);
-			free_controllers(hlist[i]->controllers);
+			free_string_list(hlist[i]->controllers);
 		}
 		free(hlist);
 	}
@@ -157,23 +225,6 @@ static void free_handler_data(struct cgfsng_handler_data *d)
 }
 
 /*
- * Given a null-terminated array of strings, check whether @entry
- * is one of the strings
- */
-static bool in_controller_list(char **list, char *entry)
-{
-	int i;
-
-	if (!list)
-		return false;
-	for (i = 0; list[i]; i++)
-		if (strcmp(list[i], entry) == 0)
-			return true;
-
-	return false;
-}
-
-/*
  * Given a handler's cgroup data, return the struct hierarchy for the
  * controller @c, or NULL if there is none.
  */
@@ -184,7 +235,7 @@ struct hierarchy *get_hierarchy(struct cgfsng_handler_data *d, char *c)
 	if (!d || !d->hierarchies)
 		return NULL;
 	for (i = 0; d->hierarchies[i]; i++) {
-		if (in_controller_list(d->hierarchies[i]->controllers, c))
+		if (string_in_list(d->hierarchies[i]->controllers, c))
 			return d->hierarchies[i];
 	}
 	return NULL;
@@ -202,7 +253,7 @@ static bool controller_lists_intersect(char **l1, char **l2)
 		return false;
 
 	for (i = 0; l1[i]; i++) {
-		if (in_controller_list(l2, l1[i]))
+		if (string_in_list(l2, l1[i]))
 			return true;
 	}
 	return false;
@@ -215,11 +266,12 @@ static bool controller_lists_intersect(char **l1, char **l2)
  */
 static bool controller_list_is_dup(struct hierarchy **hlist, char **clist)
 {
-	struct hierarchy *s;
+	int i;
+
 	if (!hlist)
 		return false;
-	for (s = hlist[0]; s; s++)
-		if (controller_lists_intersect(s->controllers, clist))
+	for (i = 0; hlist[i]; i++)
+		if (controller_lists_intersect(hlist[i]->controllers, clist))
 			return true;
 	return false;
 
@@ -238,7 +290,7 @@ static bool controller_found(struct hierarchy **hlist, char *entry)
 		return false;
 
 	for (i = 0; hlist[i]; i++)
-		if (in_controller_list(hlist[i]->controllers, entry))
+		if (string_in_list(hlist[i]->controllers, entry))
 			return true;
 	return false;
 }
@@ -253,7 +305,7 @@ static bool all_controllers_found(struct cgfsng_handler_data *d)
 	char *p, *saveptr = NULL;
 	struct hierarchy ** hlist = d->hierarchies;
 
-	if (!controller_found(hlist, "systemd")) {
+	if (!controller_found(hlist, "name=systemd")) {
 		ERROR("no systemd controller mountpoint found");
 		return false;
 	}
@@ -282,7 +334,7 @@ static bool is_cgroup_mountinfo_line(char *line)
 	int i;
 	char *p = line;
 
-	for (i = 0; i < 3; i++) {
+	for (i = 0; i < 4; i++) {
 		p = index(p, ' ');
 		if (!p)
 			return false;
@@ -302,19 +354,20 @@ static bool is_lxcfs(const char *line)
 }
 
 /*
+ * Get the controllers from a mountinfo line
  * There are other ways we could get this info.  For lxcfs, field 3
  * is /cgroup/controller-list.  For cgroupfs, we could parse the mount
  * options.  But we simply assume that the mountpoint must be
  * /sys/fs/cgroup/controller-list
  */
-static char **get_controllers(char *line)
+static char **get_controllers(char **klist, char **nlist, char *line)
 {
 	// the fourth field is /sys/fs/cgroup/comma-delimited-controller-list
 	int i;
-	char *p = line, *tok, *saveptr = NULL;
+	char *p = line, *p2, *tok, *saveptr = NULL;
 	char **aret = NULL;
 
-	for (i = 0; i < 3; i++) {
+	for (i = 0; i < 4; i++) {
 		p = index(p, ' ');
 		if (!p)
 			goto out_free;
@@ -325,14 +378,21 @@ static char **get_controllers(char *line)
 	if (strncmp(p, "/sys/fs/cgroup/", 15) != 0)
 		goto out_free;
 	p += 15;
+	p2 = index(p, ' ');
+	if (!p2) {
+		ERROR("corrupt mountinfo");
+		return NULL;
+	}
+	*p2 = '\0';
 	for (tok = strtok_r(p, ",", &saveptr); tok;
-			tok = strtok_r(NULL, ",", &saveptr))
-		must_append_controller(&aret, tok);
+			tok = strtok_r(NULL, ",", &saveptr)) {
+		must_append_controller(klist, nlist, &aret, tok);
+	}
 
 	return aret;
 
 out_free:
-	free_controllers(aret);
+	free_string_list(aret);
 	return NULL;
 }
 
@@ -350,6 +410,7 @@ static void add_controller(struct cgfsng_handler_data *d, char **clist,
 			   char *mountpoint, char *base_cgroup)
 {
 	struct hierarchy *new;
+	int newentry;
 
 	do {
 		new = malloc(sizeof(*new));
@@ -357,6 +418,9 @@ static void add_controller(struct cgfsng_handler_data *d, char **clist,
 	new->controllers = clist;
 	new->mountpoint = mountpoint;
 	new->base_cgroup = base_cgroup;
+
+	newentry = append_null_to_list((void ***)&d->hierarchies);
+	d->hierarchies[newentry] = new;
 }
 
 /*
@@ -366,19 +430,17 @@ static void add_controller(struct cgfsng_handler_data *d, char **clist,
 static char *get_mountpoint(char *line)
 {
 	int i;
-	char *p = line, *p2, *sret;
+	char *p = line, *sret;
 	size_t len;
 
-	for (i = 0; i < 3; i++) {
+	for (i = 0; i < 4; i++) {
 		p = index(p, ' ');
 		if (!p)
 			return NULL;
 		p++;
 	}
-	p2 = index(p, ' ');
-	if (!p2)
-		return NULL;
-	len = p2 - p;
+	/* we've already stuck a \0 after the mountpoint */
+	len = strlen(p);
 	do {
 		sret = malloc(len + 1);
 	} while (!sret);
@@ -403,7 +465,7 @@ static char *copy_to_eol(char *p)
 	do {
 		sret = malloc(len + 1);
 	} while (!sret);
-	memcpy(sret, p2, len);
+	memcpy(sret, p, len);
 	sret[len] = '\0';
 	return sret;
 }
@@ -463,34 +525,35 @@ static char *get_current_cgroup(char *basecginfo, char *controller)
 	}
 }
 
+static void append_line(char **dest, size_t oldlen, char *new, size_t newlen)
+{
+	size_t full = oldlen + newlen;
+	char *tmp;
+
+	do {
+		tmp = realloc(*dest, full + 1);
+	} while (!tmp);
+	*dest = tmp;
+
+	strcat(tmp, new);
+}
+
 /* Slurp in a whole file */
 static char *read_file(char *fnam)
 {
 	FILE *f;
-	long flen;
-	char *buf;
+	char *line = NULL, *buf = NULL;
+	size_t len = 0, fulllen = 0;
 
 	f = fopen(fnam, "r");
 	if (!f)
 		return NULL;
-	if (fseek(f, 0, SEEK_END) < 0) {
-		fclose(f);
-		return NULL;
-	}
-	if ((flen = ftell(f)) < 0) {
-		fclose(f);
-		return NULL;
-	}
-	do {
-		buf = malloc(flen+1);
-	} while (!buf);
-	buf[flen] = '\0';
-	if (fread(buf, 1, flen, f) != flen) {
-		fclose(f);
-		free(buf);
-		return NULL;
+	while (getline(&line, &len, f) != -1) {
+		append_line(&buf, fulllen, line, len);
+		fulllen += len;
 	}
 	fclose(f);
+	free(line);
 	return buf;
 }
 
@@ -510,86 +573,56 @@ static bool test_writeable(char *mountpoint, char *path)
 	return ret == 0;
 }
 
-/*
- * At startup, parse_hierarchies finds all the info we need about
- * cgroup mountpoints and current cgroups, and stores it in @d.
- */
-static bool parse_hierarchies(struct cgfsng_handler_data *d)
+static void must_append_string(char ***list, char *entry)
 {
-	FILE *f;
-	char * line = NULL, *basecginfo;
-	size_t len = 0;
+	int newentry = append_null_to_list((void ***)list);
+	char *copy;
 
-	if (geteuid())
-		basecginfo = read_file("/proc/self/cgroup");
-	else
-		basecginfo = read_file("/proc/1/cgroup");
-	if (!basecginfo)
-		return false;
-
-	if ((f = fopen("/proc/self/mountinfo", "r")) == NULL) {
-		ERROR("Failed opening /proc/self/mountinfo");
-		return false;
-	}
-
-	/* we support simple cgroup mounts and lxcfs mounts */
-	while (getline(&line, &len, f) != -1) {
-		char **controller_list = NULL;
-		char *mountpoint, *base_cgroup;
-
-		if (!is_cgroup_mountinfo_line(line))
-			continue;
-		if (!is_lxcfs(line) && !is_cgroupfs(line))
-			continue;
-
-		controller_list = get_controllers(line);
-		if (!controller_list)
-			continue;
-
-		if (controller_list_is_dup(d->hierarchies, controller_list)) {
-			free(controller_list);
-			continue;
-		}
-
-		mountpoint = get_mountpoint(line);
-		if (!mountpoint) {
-			ERROR("Error reading mountinfo: bad line '%s'", line);
-			free_controllers(controller_list);
-			continue;
-		}
-
-		base_cgroup = get_current_cgroup(basecginfo, controller_list[0]);
-		if (!base_cgroup) {
-			ERROR("Failed to find current cgroup for controller '%s'", controller_list[0]);
-			free_controllers(controller_list);
-			free(mountpoint);
-			continue;
-		}
-		prune_init_scope(base_cgroup);
-		if (!test_writeable(mountpoint, base_cgroup)) {
-			free_controllers(controller_list);
-			free(mountpoint);
-			free(base_cgroup);
-			continue;
-		}
-		add_controller(d, controller_list, mountpoint, base_cgroup);
-	}
-
-	free(basecginfo);
-
-	fclose(f);
-	free(line);
-
-	/* verify that all controllers in cgroup.use and all crucial
-	 * controllers are accounted for
-	 */
-	if (!all_controllers_found(d))
-		return false;
-
-	return true;
+	do {
+		copy = strdup(entry);
+	} while (!*copy);
+	(*list)[newentry] = copy;
 }
 
-#if 1
+static void get_existing_subsystems(char ***klist, char ***nlist)
+{
+	FILE *f;
+	char *line = NULL;
+	size_t len = 0;
+
+	if ((f = fopen("/proc/self/cgroup", "r")) == NULL)
+		return;
+	while (getline(&line, &len, f) != -1) {
+		char *p, *p2, *tok, *saveptr = NULL;
+		p = index(line, ':');
+		if (!p)
+			continue;
+		p++;
+		p2 = index(p, ':');
+		if (!p2)
+			continue;
+		*p2 = '\0';
+		for (tok = strtok_r(p, ",", &saveptr); tok;
+				tok = strtok_r(NULL, ",", &saveptr)) {
+			if (strncmp(tok, "name=", 5) == 0)
+				must_append_string(nlist, tok);
+			else
+				must_append_string(klist, tok);
+		}
+	}
+
+	free(line);
+	fclose(f);
+}
+
+static void trim(char *s)
+{
+	size_t len = strlen(s);
+	while (s[len-1] == '\n')
+		s[--len] = '\0';
+}
+
+#if SERGEDEBUG
 static void print_init_debuginfo(struct cgfsng_handler_data *d)
 {
 	int i;
@@ -616,6 +649,103 @@ static void print_init_debuginfo(struct cgfsng_handler_data *d)
 #else
 #define print_init_debuginfo(d) 
 #endif
+
+/*
+ * At startup, parse_hierarchies finds all the info we need about
+ * cgroup mountpoints and current cgroups, and stores it in @d.
+ */
+static bool parse_hierarchies(struct cgfsng_handler_data *d)
+{
+	FILE *f;
+	char * line = NULL, *basecginfo;
+	char **klist = NULL, **nlist = NULL;
+	size_t len = 0;
+
+	if (geteuid())
+		basecginfo = read_file("/proc/self/cgroup");
+	else
+		basecginfo = read_file("/proc/1/cgroup");
+	if (!basecginfo)
+		return false;
+
+	if ((f = fopen("/proc/self/mountinfo", "r")) == NULL) {
+		ERROR("Failed opening /proc/self/mountinfo");
+		return false;
+	}
+
+	get_existing_subsystems(&klist, &nlist);
+#if SERGEDEBUG
+	printf("basecginfo is %s\n", basecginfo);
+	int k;
+	for (k = 0; klist[k]; k++)
+		printf("kernel subsystem %d: %s\n", k, klist[k]);
+	for (k = 0; nlist[k]; k++)
+		printf("named subsystem %d: %s\n", k, nlist[k]);
+#endif
+
+	/* we support simple cgroup mounts and lxcfs mounts */
+	while (getline(&line, &len, f) != -1) {
+		char **controller_list = NULL;
+		char *mountpoint, *base_cgroup;
+
+		if (!is_cgroup_mountinfo_line(line))
+			continue;
+
+		if (!is_lxcfs(line) && !is_cgroupfs(line))
+			continue;
+
+		controller_list = get_controllers(klist, nlist, line);
+		if (!controller_list)
+			continue;
+
+		if (controller_list_is_dup(d->hierarchies, controller_list)) {
+			free(controller_list);
+			continue;
+		}
+
+		mountpoint = get_mountpoint(line);
+		if (!mountpoint) {
+			ERROR("Error reading mountinfo: bad line '%s'", line);
+			free_string_list(controller_list);
+			continue;
+		}
+
+		base_cgroup = get_current_cgroup(basecginfo, controller_list[0]);
+		if (!base_cgroup) {
+			ERROR("Failed to find current cgroup for controller '%s'", controller_list[0]);
+			free_string_list(controller_list);
+			free(mountpoint);
+			continue;
+		}
+		trim(base_cgroup);
+		prune_init_scope(base_cgroup);
+		if (!test_writeable(mountpoint, base_cgroup)) {
+			free_string_list(controller_list);
+			free(mountpoint);
+			free(base_cgroup);
+			continue;
+		}
+		add_controller(d, controller_list, mountpoint, base_cgroup);
+	}
+
+	free_string_list(klist);
+	free_string_list(nlist);
+
+	free(basecginfo);
+
+	fclose(f);
+	free(line);
+
+	print_init_debuginfo(d);
+
+	/* verify that all controllers in cgroup.use and all crucial
+	 * controllers are accounted for
+	 */
+	if (!all_controllers_found(d))
+		return false;
+
+	return true;
+}
 
 static void *cgfsng_init(const char *name)
 {
@@ -894,7 +1024,7 @@ static bool cgfsng_enter(void *hdata, pid_t pid)
 						d->hierarchies[i]->base_cgroup,
 						d->container_cgroup, "cgroup.procs",
 						NULL);
-		if (lxc_write_to_file(fullpath, pidstr, len, false) != len) {
+		if (lxc_write_to_file(fullpath, pidstr, len, false) != 0) {
 			ERROR("Failed to enter %s\n", fullpath);
 			free(fullpath);
 			return false;
@@ -995,7 +1125,7 @@ static bool cgfsng_escape(void *hdata)
 		char *fullpath = must_make_path(d->hierarchies[i]->mountpoint,
 						d->hierarchies[i]->base_cgroup,
 						"cgroup.procs", NULL);
-		if (lxc_write_to_file(fullpath, "0", 2, false) != 1) {
+		if (lxc_write_to_file(fullpath, "0", 2, false) != 0) {
 			ERROR("Failed to enter %s\n", fullpath);
 			free(fullpath);
 			return false;
@@ -1018,7 +1148,7 @@ static bool cgfsng_unfreeze(void *hdata)
 	if (!d || !h)
 		return false;
 	fullpath = must_make_path(h->mountpoint, h->base_cgroup, d->container_cgroup, "freezer.state", NULL);
-	if (lxc_write_to_file(fullpath, THAWED, THAWED_LEN, false) != THAWED_LEN) {
+	if (lxc_write_to_file(fullpath, THAWED, THAWED_LEN, false) != 0) {
 		free(fullpath);
 		return false;
 	}
@@ -1049,17 +1179,24 @@ static bool cgfsng_attach(const char *name, const char *lxcpath, pid_t pid)
 		return false;
 
 	for (i = 0; d->hierarchies[i]; i++) {
-		char *fullpath = must_make_path(d->hierarchies[i]->mountpoint,
-				d->hierarchies[i]->base_cgroup, d->container_cgroup,
-				"cgroup.procs", NULL);
-		if (lxc_write_to_file(fullpath, pidstr, len, false) != len) {
+		char *path, *fullpath;
+		struct hierarchy *h = d->hierarchies[i];
+
+		path = lxc_cmd_get_cgroup_path(name, lxcpath, h->controllers[0]);
+		if (!path) // not running
+			continue;
+
+		fullpath = must_make_path(h->mountpoint, path, "cgroup.procs", NULL);
+		if (lxc_write_to_file(fullpath, pidstr, len, false) != 0) {
 			SYSERROR("Failed to attach %d to %s", (int)pid, fullpath);
+			sleep(60);
 			free(fullpath);
+			free(path);
 			free_handler_data(d);
 			return false;
 		}
+		free(path);
 		free(fullpath);
-
 	}
 
 	free_handler_data(d);
@@ -1068,7 +1205,7 @@ static bool cgfsng_attach(const char *name, const char *lxcpath, pid_t pid)
 
 static int cgfsng_get(const char *filename, char *value, size_t len, const char *name, const char *lxcpath)
 {
-	char *subsystem, *p;
+	char *subsystem, *p, *path;
 	struct cgfsng_handler_data *d;
 	struct hierarchy *h;
 	int ret = -1;
@@ -1078,20 +1215,26 @@ static int cgfsng_get(const char *filename, char *value, size_t len, const char 
 	if ((p = strchr(subsystem, '.')) != NULL)
 		*p = '\0';
 
+	path = lxc_cmd_get_cgroup_path(name, lxcpath, subsystem);
+	if (!path) // not running
+		return -1;
+
 	d = cgfsng_init(name);
-	if (!d)
+	if (!d) {
+		free(path);
 		return false;
+	}
 
 	h = get_hierarchy(d, subsystem);
 	if (h) {
-		char *fullpath = must_make_path(h->mountpoint, h->base_cgroup,
-					d->container_cgroup, filename, NULL);
+		char *fullpath = must_make_path(h->mountpoint, path, filename, NULL);
+		printf("looking at %s\n", fullpath);
 		ret = lxc_read_from_file(fullpath, value, len);
 	}
 
 	free_handler_data(d);
+	free(path);
 	
-	printf("XXX returning %d\n", ret);
 	return ret;
 }
 
