@@ -262,6 +262,8 @@ static bool all_controllers_found(struct cgfsng_handler_data *d)
 		return false;
 	}
 	
+	if (!d->cgroup_use)
+		return true;
 	for (p = strtok_r(d->cgroup_use, ",", &saveptr); p;
 			p = strtok_r(NULL, ",", &saveptr)) {
 		if (!controller_found(hlist, p)) {
@@ -587,6 +589,34 @@ static bool parse_hierarchies(struct cgfsng_handler_data *d)
 	return true;
 }
 
+#if 1
+static void print_init_debuginfo(struct cgfsng_handler_data *d)
+{
+	int i;
+	printf("Cgroup information:\n");
+	printf("  container name: %s\n", d->name);
+	printf("  lxc.cgroup.use: %s\n", d->cgroup_use ? d->cgroup_use : "(none)");
+	printf("  lxc.cgroup.pattern: %s\n", d->cgroup_pattern);
+	printf("  cgroup: %s\n", d->container_cgroup ? d->container_cgroup : "(none)");
+	if (!d->hierarchies) {
+		printf("  No hierarchies found.\n");
+		return;
+	}
+	printf("  Hierarchies:\n");
+	for (i = 0; d->hierarchies[i]; i++) {
+		struct hierarchy *h = d->hierarchies[i];
+		int j;
+		printf("  %d: base_cgroup %s\n", i, h->base_cgroup);
+		printf("      mountpoint %s\n", h->mountpoint);
+		printf("      controllers:\n");
+		for (j = 0; h->controllers[j]; j++)
+			printf("     %d: %s\n", j, h->controllers[j]);
+	}
+}
+#else
+#define print_init_debuginfo(d) 
+#endif
+
 static void *cgfsng_init(const char *name)
 {
 	struct cgfsng_handler_data *d;
@@ -607,7 +637,7 @@ static void *cgfsng_init(const char *name)
 		SYSERROR("Error reading list of cgroups to use");
 		goto out_free;
 	}
-	do {
+	if (cgroup_use) do {
 		d->cgroup_use = strdup(cgroup_use);
 	} while (!d->cgroup_use);
 	cgroup_pattern = lxc_global_config_value("lxc.cgroup.pattern");
@@ -623,6 +653,8 @@ static void *cgfsng_init(const char *name)
 
 	if (!parse_hierarchies(d))
 		goto out_free;
+
+	print_init_debuginfo(d);
 
 	return d;
 
@@ -1034,6 +1066,35 @@ static bool cgfsng_attach(const char *name, const char *lxcpath, pid_t pid)
 	return true;
 }
 
+static int cgfsng_get(const char *filename, char *value, size_t len, const char *name, const char *lxcpath)
+{
+	char *subsystem, *p;
+	struct cgfsng_handler_data *d;
+	struct hierarchy *h;
+	int ret = -1;
+
+	subsystem = alloca(strlen(filename) + 1);
+	strcpy(subsystem, filename);
+	if ((p = strchr(subsystem, '.')) != NULL)
+		*p = '\0';
+
+	d = cgfsng_init(name);
+	if (!d)
+		return false;
+
+	h = get_hierarchy(d, subsystem);
+	if (h) {
+		char *fullpath = must_make_path(h->mountpoint, h->base_cgroup,
+					d->container_cgroup, filename, NULL);
+		ret = lxc_read_from_file(fullpath, value, len);
+	}
+
+	free_handler_data(d);
+	
+	printf("XXX returning %d\n", ret);
+	return ret;
+}
+
 static struct cgroup_ops cgfsng_ops = {
 	.init = cgfsng_init,
 	.destroy = cgfsng_destroy,
@@ -1042,7 +1103,7 @@ static struct cgroup_ops cgfsng_ops = {
 	.canonical_path = cgfsng_canonical_path,
 	.escape = cgfsng_escape,
 	.get_cgroup = cgfsng_get_cgroup,
-	.get = NULL,
+	.get = cgfsng_get,
 	.set = NULL,
 	.unfreeze = cgfsng_unfreeze,
 	.setup_limits = NULL,
