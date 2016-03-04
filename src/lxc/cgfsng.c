@@ -50,7 +50,6 @@
 
 /*
  * TODO
- * . implement nrtasks, or just refuse to run if it's needed (very old kernels)
  * . setup_limits - do we need the check for devices limits?
  * . go through page by page looking for things not being freed
  * . switch over to lxc_string and lxc_array helpers from utils.c?
@@ -1114,13 +1113,64 @@ static bool cgfsng_mount(void *hdata, const char *root, int type)
 	return false;
 }
 
-/*
- * TODO - implement this at some point
- * This is not called on any modern kernel, so low priority.
- * Just add up the nrtasks for all sub-cgroups in the freezer subsystem.
- */
+static int recursive_count_nrtasks(char *dirname)
+{
+	struct dirent dirent, *direntp;
+	DIR *dir;
+	int count = 0, ret;
+	char *path;
+
+	dir = opendir(dirname);
+	if (!dir)
+		return 0;
+
+	while (!readdir_r(dir, &dirent, &direntp)) {
+		struct stat mystat;
+
+		if (!direntp)
+			break;
+
+		if (!strcmp(direntp->d_name, ".") ||
+		    !strcmp(direntp->d_name, ".."))
+			continue;
+
+		path = must_make_path(dirname, direntp->d_name, NULL);
+
+		if (lstat(path, &mystat))
+			goto next;
+
+		if (!S_ISDIR(mystat.st_mode))
+			goto next;
+
+		count += recursive_count_nrtasks(path);
+next:
+		free(path);
+	}
+
+	path = must_make_path(dirname, "cgroup.procs", NULL);
+	ret = lxc_count_file_lines(path);
+	if (ret != -1)
+		count += ret;
+	free(path);
+
+	(void) closedir(dir);
+
+	return count;
+}
+
 static int cgfsng_nrtasks(void *hdata) {
-	return 0;
+	struct cgfsng_handler_data *d = hdata;
+	char *path;
+	int count;
+
+	if (!d || !d->container_cgroup || !d->hierarchies)
+		return -1;
+	path = must_make_path(d->hierarchies[0]->mountpoint,
+				d->hierarchies[0]->base_cgroup,
+				d->container_cgroup, NULL);
+	count = recursive_count_nrtasks(path);
+	free(path);
+	return count;
 }
 
 /* Only root needs to escape to the cgroup of its init */
@@ -1136,6 +1186,7 @@ static bool cgfsng_escape(void *hdata)
 		char *fullpath = must_make_path(d->hierarchies[i]->mountpoint,
 						d->hierarchies[i]->base_cgroup,
 						"cgroup.procs", NULL);
+		printf("escape: using path %s\n", fullpath);
 		if (lxc_write_to_file(fullpath, "0", 2, false) != 0) {
 			ERROR("Failed to enter %s\n", fullpath);
 			free(fullpath);
