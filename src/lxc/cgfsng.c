@@ -500,12 +500,12 @@ static char *must_make_path(const char *first, ...) __attribute__((sentinel));
  */
 static bool test_writeable(char *mountpoint, char *path)
 {
-	char *fullpath = must_make_path(mountpoint, path, "XXXXXX", NULL);
+	char *fullpath = must_make_path(mountpoint, path, NULL);
+	int ret;
 
-	if (!mkdtemp(fullpath))
-		return false;
-	(void)rmdir(fullpath);
-	return true;
+	ret = access(fullpath, W_OK);
+	free(fullpath);
+	return ret == 0;
 }
 
 /*
@@ -996,6 +996,21 @@ static bool cgfsng_unfreeze(void *hdata)
 	return true;
 }
 
+static const char *cgfsng_get_cgroup(void *hdata, const char *subsystem)
+{
+	struct cgfsng_handler_data *d = hdata;
+	if (!d)
+		return NULL;
+	return d->container_cgroup;
+}
+
+static bool cgfsng_attach(const char *name, const char *lxcpath, pid_t pid)
+{
+	struct cgfsng_handler_data *d = hdata;
+	if (!d)
+		return NULL;
+}
+
 static struct cgroup_ops cgfsng_ops = {
 	.init = cgfsng_init,
 	.destroy = cgfsng_destroy,
@@ -1003,13 +1018,13 @@ static struct cgroup_ops cgfsng_ops = {
 	.enter = cgfsng_enter,
 	.canonical_path = cgfsng_canonical_path,
 	.escape = cgfsng_escape,
-	.get_cgroup = NULL,
+	.get_cgroup = cgfsng_get_cgroup,
 	.get = NULL,
 	.set = NULL,
 	.unfreeze = cgfsng_unfreeze,
 	.setup_limits = NULL,
 	.name = "cgroupfs-ng",
-	.attach = NULL,
+	.attach = cgfsng_attach,
 	.chown = cgfsns_chown,
 	.mount_cgroup = cgfsng_mount,
 	.nrtasks = cgfsng_nrtasks,
