@@ -2420,7 +2420,7 @@ static const char *cgfs_canonical_path(void *hdata)
 	return path;
 }
 
-static bool cgfs_escape(void)
+static bool cgfs_escape(void *hdata)
 {
 	struct cgroup_meta_data *md;
 	int i;

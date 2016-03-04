@@ -112,10 +112,10 @@ const char *cgroup_get_cgroup(struct lxc_handler *handler, const char *subsystem
 	return NULL;
 }
 
-bool cgroup_escape(void)
+bool cgroup_escape(struct lxc_handler *handler)
 {
 	if (ops)
-		return ops->escape();
+		return ops->escape(handler->cgroup_data);
 	return false;
 }
 

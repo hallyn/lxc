@@ -156,6 +156,19 @@ static bool in_controller_list(char **list, char *entry)
 	return false;
 }
 
+struct hierarchy *get_hierarchy(struct cgfsng_handler_data *d, char *c)
+{
+	int i;
+
+	if (!d || !d->hierarchies)
+		return NULL;
+	for (i = 0; d->hierarchies[i]; i++) {
+		if (in_controller_list(d->hierarchies[i]->controllers, c))
+			return d->hierarchies[i];
+	}
+	return NULL;
+}
+
 static bool controller_lists_intersect(char **l1, char **l2)
 {
 	int i;
@@ -773,14 +786,17 @@ static bool cgfsng_enter(void *hdata, pid_t pid)
 		return false;
 
 	for (i = 0; d->hierarchies[i]; i++) {
-		// todo - handle cgroup.procs for legacy
+		// TODO - fall back to tasks if needed?
 		char *fullpath = must_make_path(d->hierarchies[i]->mountpoint,
 						d->hierarchies[i]->base_cgroup,
-						d->container_cgroup, "tasks", NULL);
+						d->container_cgroup, "cgroup.procs",
+						NULL);
 		if (lxc_write_to_file(fullpath, pidstr, len, false) != len) {
 			ERROR("Failed to enter %s\n", fullpath);
+			free(fullpath);
 			return false;
 		}
+		free(fullpath);
 	}
 
 	return true;
@@ -863,17 +879,62 @@ static int cgfsng_nrtasks(void *hdata) {
 	return 0;
 }
 
+/* Only root needs to escape to the cgroup of its init */
+static bool cgfsng_escape(void *hdata)
+{
+	struct cgfsng_handler_data *d = hdata;
+	int i;
+
+	if (geteuid())
+		return true;
+
+	for (i = 0; d->hierarchies[i]; i++) {
+		// TODO - fall back to tasks if needed?
+		char *fullpath = must_make_path(d->hierarchies[i]->mountpoint,
+						d->hierarchies[i]->base_cgroup,
+						"cgroup.procs", NULL);
+		if (lxc_write_to_file(fullpath, "0", 2, false) != 1) {
+			ERROR("Failed to enter %s\n", fullpath);
+			free(fullpath);
+			return false;
+		}
+		free(fullpath);
+	}
+
+	return true;
+}
+
+#define THAWED "THAWED"
+#define THAWED_LEN (strlen(THAWED))
+
+static bool cgfsng_unfreeze(void *hdata)
+{
+	struct cgfsng_handler_data *d = hdata;
+	char *fullpath;
+	struct hierarchy *h = get_hierarchy(d, "freezer");
+
+	if (!d || !h)
+		return false;
+	fullpath = must_make_path(h->mountpoint, h->base_cgroup, d->container_cgroup, "freezer.state", NULL);
+	if (lxc_write_to_file(fullpath, THAWED, THAWED_LEN, false) != THAWED_LEN) {
+		free(fullpath);
+		return false;
+	}
+	free(fullpath);
+	return true;
+}
+
 static struct cgroup_ops cgfsng_ops = {
 	.init = cgfsng_init,
 	.destroy = cgfsng_destroy,
 	.create = cgfsng_create,
 	.enter = cgfsng_enter,
 	.canonical_path = cgfsng_canonical_path,
-	.escape = NULL,
+	.escape = cgfsng_escape,
 	.get_cgroup = NULL,
 	.get = NULL,
 	.set = NULL,
-	.unfreeze = NULL,
+	.unfreeze = cgfsng_unfreeze,
 	.setup_limits = NULL,
 	.name = "cgroupfs-ng",
 	.attach = NULL,
