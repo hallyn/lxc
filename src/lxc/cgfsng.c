@@ -858,7 +858,6 @@ static bool cgfsng_enter(void *hdata, pid_t pid)
 		return false;
 
 	for (i = 0; d->hierarchies[i]; i++) {
-		// TODO - fall back to tasks if needed?
 		char *fullpath = must_make_path(d->hierarchies[i]->mountpoint,
 						d->hierarchies[i]->base_cgroup,
 						d->container_cgroup, "cgroup.procs",
@@ -961,7 +960,6 @@ static bool cgfsng_escape(void *hdata)
 		return true;
 
 	for (i = 0; d->hierarchies[i]; i++) {
-		// TODO - fall back to tasks if needed?
 		char *fullpath = must_make_path(d->hierarchies[i]->mountpoint,
 						d->hierarchies[i]->base_cgroup,
 						"cgroup.procs", NULL);
@@ -1006,9 +1004,34 @@ static const char *cgfsng_get_cgroup(void *hdata, const char *subsystem)
 
 static bool cgfsng_attach(const char *name, const char *lxcpath, pid_t pid)
 {
-	struct cgfsng_handler_data *d = hdata;
+	struct cgfsng_handler_data *d;
+	char pidstr[25];
+	int i, len;
+
+	len = snprintf(pidstr, 25, "%d", pid);
+	if (len < 0 || len > 25)
+		return false;
+
+	d = cgfsng_init(name);
 	if (!d)
-		return NULL;
+		return false;
+
+	for (i = 0; d->hierarchies[i]; i++) {
+		char *fullpath = must_make_path(d->hierarchies[i]->mountpoint,
+				d->hierarchies[i]->base_cgroup, d->container_cgroup,
+				"cgroup.procs", NULL);
+		if (lxc_write_to_file(fullpath, pidstr, len, false) != len) {
+			SYSERROR("Failed to attach %d to %s", (int)pid, fullpath);
+			free(fullpath);
+			free_handler_data(d);
+			return false;
+		}
+		free(fullpath);
+
+	}
+
+	free_handler_data(d);
+	return true;
 }
 
 static struct cgroup_ops cgfsng_ops = {
