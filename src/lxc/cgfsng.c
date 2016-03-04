@@ -67,6 +67,19 @@ struct hierarchy {
 	char *base_cgroup;
 };
 
+/*
+ * The cgroup data which is attached to the lxc_handler.
+ * @hierarchies - a NULL-terminated array of struct hierarchy, one per
+ *   hierarchy.  No duplicates.  First sufficient, writeable mounted
+ *   hierarchy wins
+ * @cgroup_use - a copy of the lxc.cgroup.use
+ * @cgroup_pattern - a copy of the lxc.cgroup.pattern
+ * @container_cgroup - if not null, the cgroup which was created for
+ *   the container.  For each hierarchy, it is created under the
+ *   @hierarchy->base_cgroup directory.  Relative to the base_cgroup
+ *   it is the same for all hierarchies.
+ * @name - the container name
+ */
 struct cgfsng_handler_data {
 	struct hierarchy **hierarchies;
 	char *cgroup_use;
@@ -143,6 +156,10 @@ static void free_handler_data(struct cgfsng_handler_data *d)
 	free(d);
 }
 
+/*
+ * Given a null-terminated array of strings, check whether @entry
+ * is one of the strings
+ */
 static bool in_controller_list(char **list, char *entry)
 {
 	int i;
@@ -156,6 +173,10 @@ static bool in_controller_list(char **list, char *entry)
 	return false;
 }
 
+/*
+ * Given a handler's cgroup data, return the struct hierarchy for the
+ * controller @c, or NULL if there is none.
+ */
 struct hierarchy *get_hierarchy(struct cgfsng_handler_data *d, char *c)
 {
 	int i;
@@ -169,6 +190,10 @@ struct hierarchy *get_hierarchy(struct cgfsng_handler_data *d, char *c)
 	return NULL;
 }
 
+/*
+ * Given two null-terminated lists of strings, return true if any string
+ * is in both.
+ */
 static bool controller_lists_intersect(char **l1, char **l2)
 {
 	int i;
@@ -183,6 +208,11 @@ static bool controller_lists_intersect(char **l1, char **l2)
 	return false;
 }
 
+/*
+ * For a null-terminated list of controllers @clist, return true if any of
+ * those controllers is already listed the null-terminated list of
+ * hierarchies @hlist.  Realistically, if one is present, all must be present.
+ */
 static bool controller_list_is_dup(struct hierarchy **hlist, char **clist)
 {
 	struct hierarchy *s;
@@ -195,6 +225,12 @@ static bool controller_list_is_dup(struct hierarchy **hlist, char **clist)
 
 }
 
+/*
+ * Return true if the controller @entry is found in the null-terminated
+ * list of hierarchies @hlist
+ *
+ * TODO - we need to deal with name= somehow
+ */
 static bool controller_found(struct hierarchy **hlist, char *entry)
 {
 	int i;
@@ -207,6 +243,11 @@ static bool controller_found(struct hierarchy **hlist, char *entry)
 	return false;
 }
 
+/*
+ * Return true if all of the controllers which we require have been
+ * found.  The required list is systemd, freezer, and anything in
+ * lxc.cgroup.use.
+ */
 static bool all_controllers_found(struct cgfsng_handler_data *d)
 {
 	char *p, *saveptr = NULL;
@@ -231,6 +272,9 @@ static bool all_controllers_found(struct cgfsng_handler_data *d)
 	return true;
 }
 
+/*
+ * Return true if the mountpoint is under /sys/fs/cgroup/
+ */
 static bool is_cgroup_mountinfo_line(char *line)
 {
 	int i;
@@ -246,6 +290,7 @@ static bool is_cgroup_mountinfo_line(char *line)
 	return strncmp(p, "/sys/fs/cgroup/", 15) == 0;
 }
 
+/* Return true if the fs type is fuse.lxcfs */
 static bool is_lxcfs(const char *line)
 {
 	char *p = strstr(line, " - ");
@@ -289,6 +334,7 @@ out_free:
 	return NULL;
 }
 
+/* return true if the fstype is cgroup */
 static bool is_cgroupfs(char *line)
 {
 	char *p = strstr(line, " - ");
@@ -297,6 +343,7 @@ static bool is_cgroupfs(char *line)
 	return strncmp(p, " - cgroup ", 10);
 }
 
+/* Add a controller to our list of hierarchies */
 static void add_controller(struct cgfsng_handler_data *d, char **clist,
 			   char *mountpoint, char *base_cgroup)
 {
@@ -310,6 +357,10 @@ static void add_controller(struct cgfsng_handler_data *d, char **clist,
 	new->base_cgroup = base_cgroup;
 }
 
+/*
+ * Get a copy of the mountpoint from @line, which is a line from
+ * /proc/self/mountinfo
+ */
 static char *get_mountpoint(char *line)
 {
 	int i;
@@ -334,6 +385,10 @@ static char *get_mountpoint(char *line)
 	return sret;
 }
 
+/*
+ * Given a multi-line string, return a null-terminated copy of the
+ * current line.
+ */
 static char *copy_to_eol(char *p)
 {
 	char *p2 = index(p, '\n'), *sret;
@@ -378,6 +433,10 @@ static bool controller_in_clist(char *cgline, char *c)
 	return false;
 }
 
+/*
+ * @basecginfo is a copy of /proc/$$/cgroup.  Return the current
+ * cgroup for @controller
+ */
 static char *get_current_cgroup(char *basecginfo, char *controller)
 {
 	char *p = basecginfo;
@@ -402,6 +461,7 @@ static char *get_current_cgroup(char *basecginfo, char *controller)
 	}
 }
 
+/* Slurp in a whole file */
 static char *read_file(char *fnam)
 {
 	FILE *f;
@@ -434,6 +494,10 @@ static char *read_file(char *fnam)
 
 static char *must_make_path(const char *first, ...) __attribute__((sentinel));
 
+/*
+ * Given a hierarchy @mountpoint and base @path, verify that we can create
+ * directories underneath it.
+ */
 static bool test_writeable(char *mountpoint, char *path)
 {
 	char *fullpath = must_make_path(mountpoint, path, "XXXXXX", NULL);
@@ -444,6 +508,10 @@ static bool test_writeable(char *mountpoint, char *path)
 	return true;
 }
 
+/*
+ * At startup, parse_hierarchies finds all the info we need about
+ * cgroup mountpoints and current cgroups, and stores it in @d.
+ */
 static bool parse_hierarchies(struct cgfsng_handler_data *d)
 {
 	FILE *f;
@@ -563,6 +631,10 @@ out_free:
 	return NULL;
 }
 
+/*
+ * Concatenate all passed-in strings into one path.  Do not fail.  If any piece is
+ * not prefixed with '/', add a '/'.
+ */
 static char *must_make_path(const char *first, ...)
 {
 	va_list args;
