@@ -73,6 +73,7 @@ struct hierarchy {
 	char **controllers;
 	char *mountpoint;
 	char *base_cgroup;
+	char *fullcgpath;
 };
 
 /*
@@ -174,7 +175,7 @@ static int append_null_to_list(void ***list)
  * Given a null-terminated array of strings, check whether @entry
  * is one of the strings
  */
-static bool string_in_list(char **list, char *entry)
+static bool string_in_list(char **list, const char *entry)
 {
 	int i;
 
@@ -231,6 +232,7 @@ static void free_hierarchies(struct hierarchy **hlist)
 		for (i = 0; hlist[i]; i++) {
 			free(hlist[i]->mountpoint);
 			free(hlist[i]->base_cgroup);
+			free(hlist[i]->fullcgpath);
 			free_string_list(hlist[i]->controllers);
 		}
 		free(hlist);
@@ -251,7 +253,7 @@ static void free_handler_data(struct cgfsng_handler_data *d)
  * Given a handler's cgroup data, return the struct hierarchy for the
  * controller @c, or NULL if there is none.
  */
-struct hierarchy *get_hierarchy(struct cgfsng_handler_data *d, char *c)
+struct hierarchy *get_hierarchy(struct cgfsng_handler_data *d, const char *c)
 {
 	int i;
 
@@ -417,6 +419,7 @@ static void add_controller(struct cgfsng_handler_data *d, char **clist,
 	new->controllers = clist;
 	new->mountpoint = mountpoint;
 	new->base_cgroup = base_cgroup;
+	new->fullcgpath = NULL;
 
 	newentry = append_null_to_list((void ***)&d->hierarchies);
 	d->hierarchies[newentry] = new;
@@ -885,10 +888,12 @@ static void cgfsng_destroy(void *hdata, struct lxc_conf *conf)
 	if (d->container_cgroup && d->hierarchies) {
 		int i;
 		for (i = 0; d->hierarchies[i]; i++) {
-			char *fullpath = must_make_path(d->hierarchies[i]->mountpoint, d->hierarchies[i]->base_cgroup, d->container_cgroup, NULL);
-
-			recursive_destroy(fullpath, conf);
-			free(fullpath);
+			struct hierarchy *h = d->hierarchies[i];
+			if (!h->fullcgpath) {
+				recursive_destroy(h->fullcgpath, conf);
+				free(h->fullcgpath);
+				h->fullcgpath = NULL;
+			}
 		}
 	}
 
@@ -909,17 +914,16 @@ static bool create_path_for_hierarchy(struct hierarchy *h, char *cgname)
 	int ret;
 
 	ret = mkdir(fullpath, 0755);
-	free(fullpath);
+	h->fullcgpath = fullpath;
 	return ret == 0;
 }
 
 static void remove_path_for_hierarchy(struct hierarchy *h, char *cgname)
 {
-	char *fullpath = must_make_path(h->mountpoint, h->base_cgroup, cgname, NULL);
-
-	if (rmdir(fullpath) < 0)
-		SYSERROR("Failed to clean up cgroup %s from failed creation attempt", fullpath);
-	free(fullpath);
+	if (rmdir(h->fullcgpath) < 0)
+		SYSERROR("Failed to clean up cgroup %s from failed creation attempt", h->fullcgpath);
+	free(h->fullcgpath);
+	h->fullcgpath = NULL;
 }
 
 
@@ -993,10 +997,8 @@ static bool cgfsng_enter(void *hdata, pid_t pid)
 		return false;
 
 	for (i = 0; d->hierarchies[i]; i++) {
-		char *fullpath = must_make_path(d->hierarchies[i]->mountpoint,
-						d->hierarchies[i]->base_cgroup,
-						d->container_cgroup, "cgroup.procs",
-						NULL);
+		char *fullpath = must_make_path(d->hierarchies[i]->fullcgpath,
+						"cgroup.procs", NULL);
 		if (lxc_write_to_file(fullpath, pidstr, len, false) != 0) {
 			ERROR("Failed to enter %s\n", fullpath);
 			free(fullpath);
@@ -1030,9 +1032,7 @@ static int chown_cgroup_wrapper(void *data)
 	destuid = get_ns_uid(arg->origuid);
 
 	for (i = 0; d->hierarchies[i]; i++) {
-		char *fullpath = must_make_path(d->hierarchies[i]->mountpoint,
-						d->hierarchies[i]->base_cgroup,
-						d->container_cgroup, NULL);
+		char *fullpath = must_make_path(d->hierarchies[i]->fullcgpath, NULL);
 		if (chown(fullpath, destuid, 0) < 0) {
 			SYSERROR("Error chowning %s", fullpath);
 			free(fullpath);
@@ -1128,9 +1128,7 @@ static int cgfsng_nrtasks(void *hdata) {
 
 	if (!d || !d->container_cgroup || !d->hierarchies)
 		return -1;
-	path = must_make_path(d->hierarchies[0]->mountpoint,
-				d->hierarchies[0]->base_cgroup,
-				d->container_cgroup, NULL);
+	path = must_make_path(d->hierarchies[0]->fullcgpath, NULL);
 	count = recursive_count_nrtasks(path);
 	free(path);
 	return count;
@@ -1172,7 +1170,7 @@ static bool cgfsng_unfreeze(void *hdata)
 
 	if (!d || !h)
 		return false;
-	fullpath = must_make_path(h->mountpoint, h->base_cgroup, d->container_cgroup, "freezer.state", NULL);
+	fullpath = must_make_path(h->fullcgpath, "freezer.state", NULL);
 	if (lxc_write_to_file(fullpath, THAWED, THAWED_LEN, false) != 0) {
 		free(fullpath);
 		return false;
@@ -1184,9 +1182,15 @@ static bool cgfsng_unfreeze(void *hdata)
 static const char *cgfsng_get_cgroup(void *hdata, const char *subsystem)
 {
 	struct cgfsng_handler_data *d = hdata;
+	struct hierarchy *h;
 	if (!d)
 		return NULL;
-	return d->container_cgroup;
+
+	h = get_hierarchy(d, subsystem);
+	if (!h)
+		return NULL;
+
+	return h->fullcgpath;
 }
 
 static bool cgfsng_attach(const char *name, const char *lxcpath, pid_t pid)
@@ -1214,7 +1218,6 @@ static bool cgfsng_attach(const char *name, const char *lxcpath, pid_t pid)
 		fullpath = must_make_path(h->mountpoint, path, "cgroup.procs", NULL);
 		if (lxc_write_to_file(fullpath, pidstr, len, false) != 0) {
 			SYSERROR("Failed to attach %d to %s", (int)pid, fullpath);
-			sleep(60);
 			free(fullpath);
 			free(path);
 			free_handler_data(d);
@@ -1258,10 +1261,8 @@ static int cgfsng_get(const char *filename, char *value, size_t len, const char 
 	h = get_hierarchy(d, subsystem);
 	if (h) {
 		char *fullpath = must_make_path(h->mountpoint, path, filename, NULL);
-#if SERGEDEBUG
-		printf("get: looking at %s\n", fullpath);
-#endif
 		ret = lxc_read_from_file(fullpath, value, len);
+		free(fullpath);
 	}
 
 	free_handler_data(d);
@@ -1300,9 +1301,6 @@ static int cgfsng_set(const char *filename, const char *value, const char *name,
 	h = get_hierarchy(d, subsystem);
 	if (h) {
 		char *fullpath = must_make_path(h->mountpoint, path, filename, NULL);
-#if SERGEDEBUG
-		printf("set: looking at %s\n", fullpath);
-#endif
 		ret = lxc_write_to_file(fullpath, value, strlen(value), false);
 		free(fullpath);
 	}
@@ -1377,10 +1375,7 @@ static int lxc_cgroup_set_data(const char *filename, const char *value, struct c
 
 	h = get_hierarchy(d, subsystem);
 	if (h) {
-		char *fullpath = must_make_path(h->mountpoint, d->container_cgroup, filename, NULL);
-#if SERGEDEBUG
-		printf("set_data: looking at %s\n", fullpath);
-#endif
+		char *fullpath = must_make_path(h->fullcgpath, filename, NULL);
 		ret = lxc_write_to_file(fullpath, value, strlen(value), false);
 		free(fullpath);
 	}
@@ -1394,7 +1389,7 @@ static bool cgfsng_setup_limits(void *hdata, struct lxc_list *cgroup_settings,
 	struct lxc_list *iterator, *sorted_cgroup_settings, *next;
 	struct lxc_cgroup *cg;
 	struct hierarchy *h;
-	char *listpath;
+	char *listpath = NULL;
 	bool ret = false;
 
 	if (lxc_list_empty(cgroup_settings))
@@ -1405,12 +1400,14 @@ static bool cgfsng_setup_limits(void *hdata, struct lxc_list *cgroup_settings,
 		return false;
 	}
 
-	h = get_hierarchy(d, "devices");
-	if (!h) {
-		ERROR("No devices cgroup setup for %s\n", d->name);
-		return false;
+	if (do_devices) {
+		h = get_hierarchy(d, "devices");
+		if (!h) {
+			ERROR("No devices cgroup setup for %s\n", d->name);
+			return false;
+		}
+		listpath = must_make_path(h->fullcgpath, "devices.list", NULL);
 	}
-	listpath = must_make_path(h->mountpoint, d->container_cgroup, "devices.list", NULL);
 
 	lxc_list_for_each(iterator, sorted_cgroup_settings) {
 		cg = iterator->elem;
