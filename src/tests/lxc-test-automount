@@ -27,6 +27,7 @@
 set -e
 
 cleanup() {
+	rmdir /sys/fs/cgroup/freezer/xx
 	lxc-destroy -n lxc-test-automount -f
 	if [ $PHASE != "done" ]; then
 		echo "automount test failed at $PHASE"
@@ -39,15 +40,19 @@ cleanup() {
 PHASE=setup
 trap cleanup EXIT
 
+rmdir /sys/fs/cgroup/freezer/xx || true
+lxc-destroy -n lxc-test-automount || true
 lxc-create -t busybox -n lxc-test-automount
 
 PHASE=no-cgroup
+echo "Starting phase $PHASE"
 config=/var/lib/lxc/lxc-test-automount/config
 sed -i '/lxc.mount.auto/d' $config
 echo "lxc.mount.auto = proc:mixed sys:mixed" >> $config
 
 lxc-start -n lxc-test-automount
 pid=`lxc-info -n lxc-test-automount -p -H`
+cg=`awk -F: '/freezer/ { print $3 }' /proc/$pid/cgroup`
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer || notfound=1
 if [ $notfound -eq 0 ]; then
@@ -64,6 +69,7 @@ fi
 
 lxc-stop -n lxc-test-automount -k
 PHASE=cgroup:mixed
+echo "Starting phase $PHASE"
 sed -i '/lxc.mount.auto/d' $config
 echo "lxc.mount.auto = cgroup:mixed proc:mixed sys:mixed" >> $config
 lxc-start -n lxc-test-automount
@@ -83,7 +89,6 @@ mkdir /proc/$pid/root/sys/fs/cgroup/freezer/xx || ro=1
 if [ $ro -eq 0 ]; then
 	cleanup
 fi
-cg=`awk -F: '/freezer/ { print $3 }'`
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xx || ro=1
 if [ $ro -eq 1 ]; then
@@ -97,17 +102,19 @@ fi
 
 lxc-stop -n lxc-test-automount -k
 PHASE=cgroup:ro
+echo "Starting phase $PHASE"
 sed -i '/lxc.mount.auto/d' $config
 echo "lxc.mount.auto = cgroup:ro proc:mixed sys:mixed" >> $config
 lxc-start -n lxc-test-automount
 pid=`lxc-info -n lxc-test-automount -p -H`
+cg=`awk -F: '/freezer/ { print $3 }' /proc/$pid/cgroup`
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer || notfound=1
 if [ $notfound -eq 1 ]; then
 	cleanup
 fi
 notfound=0
-stat /proc/$pid/root/sys/fs/cgroup/freezer/$cg/cgroup.procs || notfound=1
+stat /proc/$pid/root/sys/fs/cgroup/freezer/cgroup.procs || notfound=1
 if [ $notfound -eq 0 ]; then
 	cleanup
 fi
@@ -116,7 +123,6 @@ mkdir /proc/$pid/root/sys/fs/cgroup/freezer/xx || ro=1
 if [ $ro -eq 0 ]; then
 	cleanup
 fi
-cg=`awk -F: '/freezer/ { print $3 }'`
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xx || ro=1
 if [ $ro -eq 0 ]; then
@@ -130,17 +136,19 @@ fi
 
 lxc-stop -n lxc-test-automount -k
 PHASE=cgroup:rw
+echo "Starting phase $PHASE"
 sed -i '/lxc.mount.auto/d' $config
 echo "lxc.mount.auto = cgroup:rw proc:mixed sys:mixed" >> $config
 lxc-start -n lxc-test-automount
 pid=`lxc-info -n lxc-test-automount -p -H`
+cg=`awk -F: '/freezer/ { print $3 }' /proc/$pid/cgroup`
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer || notfound=1
 if [ $notfound -eq 1 ]; then
 	cleanup
 fi
 notfound=0
-stat /proc/$pid/root/sys/fs/cgroup/freezer/$cg/cgroup.procs || notfound=1
+stat /proc/$pid/root/sys/fs/cgroup/freezer/cgroup.procs || notfound=1
 if [ $notfound -eq 0 ]; then
 	cleanup
 fi
@@ -149,7 +157,7 @@ mkdir /proc/$pid/root/sys/fs/cgroup/freezer/xx || ro=1
 if [ $ro -eq 1 ]; then
 	cleanup
 fi
-cg=`awk -F: '/freezer/ { print $3 }'`
+rmdir /proc/$pid/root/sys/fs/cgroup/freezer/xx
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xx || ro=1
 if [ $ro -eq 1 ]; then
@@ -165,17 +173,19 @@ fi
 
 lxc-stop -n lxc-test-automount -k
 PHASE=cgroup-full:mixed
+echo "Starting phase $PHASE"
 sed -i '/lxc.mount.auto/d' $config
 echo "lxc.mount.auto = cgorup-full:mixed  proc:mixed sys:mixed" >> $config
 lxc-start -n lxc-test-automount
 pid=`lxc-info -n lxc-test-automount -p -H`
+cg=`awk -F: '/freezer/ { print $3 }' /proc/$pid/cgroup`
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer || notfound=1
 if [ $notfound -eq 1 ]; then
 	cleanup
 fi
 notfound=0
-stat /proc/$pid/root/sys/fs/cgroup/freezer/$cg/cgroup.procs || notfound=1
+stat /proc/$pid/root/sys/fs/cgroup/freezer/cgroup.procs || notfound=1
 if [ $notfound -eq 1 ]; then
 	cleanup
 fi
@@ -184,12 +194,13 @@ mkdir /proc/$pid/root/sys/fs/cgroup/freezer/xx || ro=1
 if [ $ro -eq 0 ]; then
 	cleanup
 fi
-cg=`awk -F: '/freezer/ { print $3 }'`
+/proc/$pid/root/sys/fs/cgroup/freezer/xx
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xx || ro=1
 if [ $ro -eq 1 ]; then
 	cleanup
 fi
+rmdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xx
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer/$cg/cgroup.procs || notfound=1
 if [ $notfound -eq 1 ]; then
@@ -198,17 +209,19 @@ fi
 
 lxc-stop -n lxc-test-automount -k
 PHASE=cgroup-full:ro
+echo "Starting phase $PHASE"
 sed -i '/lxc.mount.auto/d' $config
 echo "lxc.mount.auto = cgroup-full:ro proc:mixed sys:mixed" >> $config
 lxc-start -n lxc-test-automount
 pid=`lxc-info -n lxc-test-automount -p -H`
+cg=`awk -F: '/freezer/ { print $3 }' /proc/$pid/cgroup`
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer || notfound=1
 if [ $notfound -eq 1 ]; then
 	cleanup
 fi
 notfound=0
-stat /proc/$pid/root/sys/fs/cgroup/freezer/$cg/cgroup.procs || notfound=1
+stat /proc/$pid/root/sys/fs/cgroup/freezer/cgroup.procs || notfound=1
 if [ $notfound -eq 1 ]; then
 	cleanup
 fi
@@ -217,9 +230,8 @@ mkdir /proc/$pid/root/sys/fs/cgroup/freezer/xx || ro=1
 if [ $ro -eq 0 ]; then
 	cleanup
 fi
-cg=`awk -F: '/freezer/ { print $3 }'`
 ro=0
-mkdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xx || ro=1
+mkdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xy || ro=1
 if [ $ro -eq 0 ]; then
 	cleanup
 fi
@@ -231,17 +243,19 @@ fi
 
 lxc-stop -n lxc-test-automount -k
 PHASE=cgroup-full:rw
+echo "Starting phase $PHASE"
 sed -i '/lxc.mount.auto/d' $config
 echo "lxc.mount.auto = cgroup-full:rw proc:mixed sys:mixed" >> $config
 lxc-start -n lxc-test-automount
 pid=`lxc-info -n lxc-test-automount -p -H`
+cg=`awk -F: '/freezer/ { print $3 }' /proc/$pid/cgroup`
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer || notfound=1
 if [ $notfound -eq 1 ]; then
 	cleanup
 fi
 notfound=0
-stat /proc/$pid/root/sys/fs/cgroup/freezer/$cg/cgroup.procs || notfound=1
+stat /proc/$pid/root/sys/fs/cgroup/freezer/cgroup.procs || notfound=1
 if [ $notfound -eq 1 ]; then
 	cleanup
 fi
@@ -250,7 +264,7 @@ mkdir /proc/$pid/root/sys/fs/cgroup/freezer/xx || ro=1
 if [ $ro -eq 1 ]; then
 	cleanup
 fi
-cg=`awk -F: '/freezer/ { print $3 }'`
+rmdir /proc/$pid/root/sys/fs/cgroup/freezer/xx
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xx || ro=1
 if [ $ro -eq 1 ]; then
