@@ -24,7 +24,7 @@
 
 [ -f /proc/self/ns/cgroup ] && exit 0
 
-set -e
+set -ex
 
 cleanup() {
 	rmdir /sys/fs/cgroup/freezer/xx
@@ -41,7 +41,7 @@ PHASE=setup
 trap cleanup EXIT
 
 rmdir /sys/fs/cgroup/freezer/xx || true
-lxc-destroy -n lxc-test-automount || true
+lxc-destroy -n lxc-test-automount -f || true
 lxc-create -t busybox -n lxc-test-automount
 
 PHASE=no-cgroup
@@ -55,9 +55,7 @@ pid=`lxc-info -n lxc-test-automount -p -H`
 cg=`awk -F: '/freezer/ { print $3 }' /proc/$pid/cgroup`
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer || notfound=1
-if [ $notfound -eq 0 ]; then
-	cleanup
-fi
+[ $notfound -ne 0 ]
 
 # Tests are as follows:
 # 1. check that freezer controller is mounted
@@ -76,29 +74,19 @@ lxc-start -n lxc-test-automount
 pid=`lxc-info -n lxc-test-automount -p -H`
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer || notfound=1
-if [ $notfound -eq 1 ]; then
-	cleanup
-fi
+[ $notfound -ne 1 ]
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer/cgroup.procs || notfound=1
-if [ $notfound -eq 0 ]; then
-	cleanup
-fi
+[ $notfound -ne 0 ]
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/xx || ro=1
-if [ $ro -eq 0 ]; then
-	cleanup
-fi
+[ $ro -ne 0 ]
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xx || ro=1
-if [ $ro -eq 1 ]; then
-	cleanup
-fi
+[ $ro -ne 1 ]
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer/$cg/cgroup.procs || notfound=1
-if [ $notfound -eq 1 ]; then
-	cleanup
-fi
+[ $notfound -ne 1 ]
 
 lxc-stop -n lxc-test-automount -k
 PHASE=cgroup:ro
@@ -110,29 +98,19 @@ pid=`lxc-info -n lxc-test-automount -p -H`
 cg=`awk -F: '/freezer/ { print $3 }' /proc/$pid/cgroup`
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer || notfound=1
-if [ $notfound -eq 1 ]; then
-	cleanup
-fi
+[ $notfound -ne 1 ]
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer/cgroup.procs || notfound=1
-if [ $notfound -eq 0 ]; then
-	cleanup
-fi
+[ $notfound -ne 0 ]
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/xx || ro=1
-if [ $ro -eq 0 ]; then
-	cleanup
-fi
+[ $ro -ne 0 ]
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xx || ro=1
-if [ $ro -eq 0 ]; then
-	cleanup
-fi
+[ $ro -ne 0 ]
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer/$cg/cgroup.procs || notfound=1
-if [ $notfound -eq 1 ]; then
-	cleanup
-fi
+[ $notfound -ne 1 ]
 
 lxc-stop -n lxc-test-automount -k
 PHASE=cgroup:rw
@@ -144,30 +122,20 @@ pid=`lxc-info -n lxc-test-automount -p -H`
 cg=`awk -F: '/freezer/ { print $3 }' /proc/$pid/cgroup`
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer || notfound=1
-if [ $notfound -eq 1 ]; then
-	cleanup
-fi
+[ $notfound -ne 1 ]
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer/cgroup.procs || notfound=1
-if [ $notfound -eq 0 ]; then
-	cleanup
-fi
+[ $notfound -ne 0 ]
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/xx || ro=1
-if [ $ro -eq 1 ]; then
-	cleanup
-fi
+[ $ro -ne 1 ]
 rmdir /proc/$pid/root/sys/fs/cgroup/freezer/xx
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xx || ro=1
-if [ $ro -eq 1 ]; then
-	cleanup
-fi
+[ $ro -ne 1 ]
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer/$cg/cgroup.procs || notfound=1
-if [ $notfound -eq 1 ]; then
-	cleanup
-fi
+[ $notfound -ne 1 ]
 
 # cgroup-full
 
@@ -181,31 +149,21 @@ pid=`lxc-info -n lxc-test-automount -p -H`
 cg=`awk -F: '/freezer/ { print $3 }' /proc/$pid/cgroup`
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer || notfound=1
-if [ $notfound -eq 1 ]; then
-	cleanup
-fi
+[ $notfound -ne 1 ]
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer/cgroup.procs || notfound=1
-if [ $notfound -eq 1 ]; then
-	cleanup
-fi
+[ $notfound -ne 1 ]
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/xx || ro=1
-if [ $ro -eq 0 ]; then
-	cleanup
-fi
+[ $ro -ne 0 ]
 /proc/$pid/root/sys/fs/cgroup/freezer/xx
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xx || ro=1
-if [ $ro -eq 1 ]; then
-	cleanup
-fi
+[ $ro -ne 1 ]
 rmdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xx
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer/$cg/cgroup.procs || notfound=1
-if [ $notfound -eq 1 ]; then
-	cleanup
-fi
+[ $notfound -ne 1 ]
 
 lxc-stop -n lxc-test-automount -k
 PHASE=cgroup-full:ro
@@ -217,29 +175,19 @@ pid=`lxc-info -n lxc-test-automount -p -H`
 cg=`awk -F: '/freezer/ { print $3 }' /proc/$pid/cgroup`
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer || notfound=1
-if [ $notfound -eq 1 ]; then
-	cleanup
-fi
+[ $notfound -ne 1 ]
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer/cgroup.procs || notfound=1
-if [ $notfound -eq 1 ]; then
-	cleanup
-fi
+[ $notfound -ne 1 ]
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/xx || ro=1
-if [ $ro -eq 0 ]; then
-	cleanup
-fi
+[ $ro -ne 0 ]
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xy || ro=1
-if [ $ro -eq 0 ]; then
-	cleanup
-fi
+[ $ro -ne 0 ]
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer/$cg/cgroup.procs || notfound=1
-if [ $notfound -eq 1 ]; then
-	cleanup
-fi
+[ $notfound -ne 1 ]
 
 lxc-stop -n lxc-test-automount -k
 PHASE=cgroup-full:rw
@@ -251,27 +199,17 @@ pid=`lxc-info -n lxc-test-automount -p -H`
 cg=`awk -F: '/freezer/ { print $3 }' /proc/$pid/cgroup`
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer || notfound=1
-if [ $notfound -eq 1 ]; then
-	cleanup
-fi
+[ $notfound -ne 1 ]
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer/cgroup.procs || notfound=1
-if [ $notfound -eq 1 ]; then
-	cleanup
-fi
+[ $notfound -ne 1 ]
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/xx || ro=1
-if [ $ro -eq 1 ]; then
-	cleanup
-fi
+[ $ro -ne 1 ]
 rmdir /proc/$pid/root/sys/fs/cgroup/freezer/xx
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xx || ro=1
-if [ $ro -eq 1 ]; then
-	cleanup
-fi
+[ $ro -ne 1 ]
 notfound=0
-stat /proc/$pid/root/sys/fs/cgroup/freezer/$cg/cgroup.procs || notfound=1
+/proc/$pid/root/sys/fs/cgroup/freezer/$cg/cgroup.procs || notfound=1
 if [ $notfound -eq 1 ]; then
-	cleanup
-fi
