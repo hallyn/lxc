@@ -1229,16 +1229,21 @@ static bool cgfsns_chown(void *hdata, struct lxc_conf *conf)
 static int mount_cgroup_full(int type, struct hierarchy *h, char *dest,
 				   char *container_cgroup)
 {
-	int flags = MS_BIND;
 	if (type < LXC_AUTO_CGROUP_FULL_RO || type > LXC_AUTO_CGROUP_FULL_MIXED)
 		return 0;
-	if (type != LXC_AUTO_CGROUP_FULL_RW)
-		flags |= MS_RDONLY;
-	if (mount(h->mountpoint, dest, "cgroup", flags, NULL) < 0) {
+	if (mount(h->mountpoint, dest, "cgroup", MS_BIND, NULL) < 0) {
 		SYSERROR("Error bind-mounting %s cgroup onto %s", h->mountpoint,
 			 dest);
+		return -1;
+	}
+	if (type != LXC_AUTO_CGROUP_FULL_RW) {
+		if (mount(NULL, dest, "cgroup", MS_BIND | MS_REMOUNT | MS_RDONLY, NULL) < 0) {
+			SYSERROR("Error remounting %s readonly", dest);
+			return -1;
+		}
 	}
 
+	INFO("Bind mounted %s onto %s", h->mountpoint, dest);
 	if (type != LXC_AUTO_CGROUP_FULL_MIXED)
 		return 0;
 	/* remount container path rw */
@@ -1246,6 +1251,7 @@ static int mount_cgroup_full(int type, struct hierarchy *h, char *dest,
 	if (mount("", rwpath, NULL, MS_REMOUNT|MS_BIND, NULL) < 0)
 		WARN("Failed to remount %s read-write: %m", rwpath);
 	free(rwpath);
+	INFO("Made %s read-write", dest);
 	return 0;
 }
 
@@ -1264,25 +1270,35 @@ static bool cg_mount_needs_subdirs(int type)
  */
 static int
 do_secondstage_mounts_if_needed(int type, struct hierarchy *h,
-				char *controllerpath, char *cgpath)
+				char *controllerpath, char *cgpath,
+				const char *container_cgroup)
 {
 	if (type == LXC_AUTO_CGROUP_RO || type == LXC_AUTO_CGROUP_MIXED) {
+		if (mount(controllerpath, controllerpath, "cgroup", MS_BIND, NULL) < 0) {
+			SYSERROR("Error bind-mounting %s", controllerpath);
+			return -1;
+		}
 		if (mount(controllerpath, controllerpath, "cgroup",
-			   MS_BIND | MS_RDONLY, NULL) < 0) {
+			   MS_REMOUNT | MS_BIND | MS_RDONLY, NULL) < 0) {
 			SYSERROR("Error remounting %s read-only", controllerpath);
 			return -1;
 		}
 		INFO("Remounted %s read-only", controllerpath);
 	}
+	char *sourcepath = must_make_path(h->mountpoint, h->base_cgroup, container_cgroup, NULL);
 	int flags = MS_BIND;
 	if (type == LXC_AUTO_CGROUP_RO)
 		flags |= MS_RDONLY;
+	INFO("Mounting %s onto %s", sourcepath, cgpath);
 	if (mount(h->mountpoint, cgpath, "cgroup", flags, NULL) < 0) {
+		free(sourcepath);
 		SYSERROR("Error mounting cgroup %s onto %s", h->controllers[0],
 				cgpath);
-		return false;
+		return -1;
 	}
-	return true;
+	free(sourcepath);
+	INFO("Completed second stage cgroup automounts for %s", cgpath);
+	return 0;
 }
 
 static bool cgfsng_mount(void *hdata, const char *root, int type)
@@ -1338,13 +1354,14 @@ static bool cgfsng_mount(void *hdata, const char *root, int type)
 			free(controllerpath);
 			continue;
 		}
-		path2 = must_make_path(controllerpath, h->base_cgroup, NULL);
+		path2 = must_make_path(controllerpath, d->container_cgroup, NULL);
 		if (mkdir_p(path2, 0755) < 0) {
 			free(controllerpath);
 			goto bad;
 		}
 		
-		r = do_secondstage_mounts_if_needed(type, h, controllerpath, path2);
+		r = do_secondstage_mounts_if_needed(type, h, controllerpath, path2,
+						    d->container_cgroup);
 		free(controllerpath);
 		free(path2);
 		if (r < 0)
