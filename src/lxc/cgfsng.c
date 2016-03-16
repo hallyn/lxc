@@ -1246,13 +1246,15 @@ static int mount_cgroup_full(int type, struct hierarchy *h, char *dest,
 	INFO("Bind mounted %s onto %s", h->mountpoint, dest);
 	if (type != LXC_AUTO_CGROUP_FULL_MIXED)
 		return 0;
-	/* remount container path rw */
+
+	/* mount just the container path rw */
+	char *source = must_make_path(h->mountpoint, h->base_cgroup, container_cgroup);
 	char *rwpath = must_make_path(dest, container_cgroup, NULL);
-	if (mount("", rwpath, NULL, MS_BIND, NULL) < 0 ||
-			mount(NULL, rwpath, NULL, MS_REMOUNT|MS_BIND, NULL) < 0)
-		WARN("Failed to remount %s read-write: %m", rwpath);
+	if (mount(source, rwpath, "cgroup", MS_BIND, NULL) < 0)
+		WARN("Failed to mount %s read-write: %m", rwpath);
 	INFO("Made %s read-write", rwpath);
 	free(rwpath);
+	free(source);
 	return 0;
 }
 
