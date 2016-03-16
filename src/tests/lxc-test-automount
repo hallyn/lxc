@@ -24,10 +24,10 @@ set -e
 cleanup() {
 	lxc-destroy -n lxc-test-automount -f
 	if [ $PHASE != "done" ]; then
-		echo "automount test failed at $PHASE
+		echo "automount test failed at $PHASE"
 		exit 1
 	fi
-	echo "automount test passed
+	echo "automount test passed"
 	exit 0
 }
 
@@ -60,7 +60,7 @@ fi
 lxc-stop -n lxc-test-automount -k
 PHASE=cgroup:mixed
 sed -i '/lxc.mount.auto/d' $config
-echo "lxc.mount.auto = proc:mixed sys:mixed" >> $config
+echo "lxc.mount.auto = cgroup:mixed proc:mixed sys:mixed" >> $config
 lxc-start -n lxc-test-automount
 pid=`lxc-info -n lxc-test-automount -p -H`
 notfound=0
@@ -93,7 +93,7 @@ fi
 lxc-stop -n lxc-test-automount -k
 PHASE=cgroup:ro
 sed -i '/lxc.mount.auto/d' $config
-echo "lxc.mount.auto = proc:mixed sys:mixed" >> $config
+echo "lxc.mount.auto = cgroup:ro proc:mixed sys:mixed" >> $config
 lxc-start -n lxc-test-automount
 pid=`lxc-info -n lxc-test-automount -p -H`
 notfound=0
@@ -126,7 +126,7 @@ fi
 lxc-stop -n lxc-test-automount -k
 PHASE=cgroup:rw
 sed -i '/lxc.mount.auto/d' $config
-echo "lxc.mount.auto = proc:mixed sys:mixed" >> $config
+echo "lxc.mount.auto = cgroup:rw proc:mixed sys:mixed" >> $config
 lxc-start -n lxc-test-automount
 pid=`lxc-info -n lxc-test-automount -p -H`
 notfound=0
@@ -161,7 +161,7 @@ fi
 lxc-stop -n lxc-test-automount -k
 PHASE=cgroup-full:mixed
 sed -i '/lxc.mount.auto/d' $config
-echo "lxc.mount.auto = proc:mixed sys:mixed" >> $config
+echo "lxc.mount.auto = cgorup-full:mixed  proc:mixed sys:mixed" >> $config
 lxc-start -n lxc-test-automount
 pid=`lxc-info -n lxc-test-automount -p -H`
 notfound=0
@@ -194,7 +194,7 @@ fi
 lxc-stop -n lxc-test-automount -k
 PHASE=cgroup-full:ro
 sed -i '/lxc.mount.auto/d' $config
-echo "lxc.mount.auto = proc:mixed sys:mixed" >> $config
+echo "lxc.mount.auto = cgroup-full:ro proc:mixed sys:mixed" >> $config
 lxc-start -n lxc-test-automount
 pid=`lxc-info -n lxc-test-automount -p -H`
 notfound=0
@@ -227,7 +227,7 @@ fi
 lxc-stop -n lxc-test-automount -k
 PHASE=cgroup-full:rw
 sed -i '/lxc.mount.auto/d' $config
-echo "lxc.mount.auto = proc:mixed sys:mixed" >> $config
+echo "lxc.mount.auto = cgroup-full:rw proc:mixed sys:mixed" >> $config
 lxc-start -n lxc-test-automount
 pid=`lxc-info -n lxc-test-automount -p -H`
 notfound=0
