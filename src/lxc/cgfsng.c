@@ -1314,9 +1314,17 @@ static bool cgfsng_mount(void *hdata, const char *root, int type)
 	for (int i = 0; d->hierarchies[i]; i++) {
 		char *controllerpath, *path2;
 		struct hierarchy *h = d->hierarchies[i];
+		char *controller = strrchr(h->mountpoint, '/');
 		int r;
 
-		controllerpath = must_make_path(tmpfspath, h->controllers[0], NULL);
+		if (!controller)
+			continue;
+		controller++;
+		controllerpath = must_make_path(tmpfspath, controller, NULL);
+		if (dir_exists(controllerpath)) {
+			free(controllerpath);
+			continue;
+		}
 		if (mkdir(controllerpath, 0755) < 0) {
 			SYSERROR("Error creating cgroup path: %s", controllerpath);
 			free(controllerpath);
