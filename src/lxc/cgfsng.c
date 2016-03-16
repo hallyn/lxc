@@ -1231,7 +1231,7 @@ static int mount_cgroup_full(int type, struct hierarchy *h, char *dest,
 {
 	int flags = MS_BIND;
 	if (type < LXC_AUTO_CGROUP_FULL_RO || type > LXC_AUTO_CGROUP_FULL_MIXED)
-		return -1;
+		return 0;
 	if (type != LXC_AUTO_CGROUP_FULL_RW)
 		flags |= MS_RDONLY;
 	if (mount(h->mountpoint, dest, "cgroup", flags, NULL) < 0) {
