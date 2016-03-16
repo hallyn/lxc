@@ -1290,7 +1290,7 @@ do_secondstage_mounts_if_needed(int type, struct hierarchy *h,
 	if (type == LXC_AUTO_CGROUP_RO)
 		flags |= MS_RDONLY;
 	INFO("Mounting %s onto %s", sourcepath, cgpath);
-	if (mount(h->mountpoint, cgpath, "cgroup", flags, NULL) < 0) {
+	if (mount(sourcepath, cgpath, "cgroup", flags, NULL) < 0) {
 		free(sourcepath);
 		SYSERROR("Error mounting cgroup %s onto %s", h->controllers[0],
 				cgpath);
