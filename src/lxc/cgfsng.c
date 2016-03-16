@@ -1248,10 +1248,11 @@ static int mount_cgroup_full(int type, struct hierarchy *h, char *dest,
 		return 0;
 	/* remount container path rw */
 	char *rwpath = must_make_path(dest, container_cgroup, NULL);
-	if (mount("", rwpath, NULL, MS_REMOUNT|MS_BIND, NULL) < 0)
+	if (mount("", rwpath, NULL, MS_BIND, NULL) < 0 ||
+			mount(NULL, rwpath, NULL, MS_REMOUNT|MS_BIND, NULL) < 0)
 		WARN("Failed to remount %s read-write: %m", rwpath);
+	INFO("Made %s read-write", rwpath);
 	free(rwpath);
-	INFO("Made %s read-write", dest);
 	return 0;
 }
 

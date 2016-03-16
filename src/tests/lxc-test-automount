@@ -27,6 +27,7 @@
 set -ex
 
 cleanup() {
+	set +e
 	rmdir /sys/fs/cgroup/freezer/xx
 	lxc-destroy -n lxc-test-automount -f
 	if [ $PHASE != "done" ]; then
@@ -107,7 +108,7 @@ mkdir /proc/$pid/root/sys/fs/cgroup/freezer/xx || ro=1
 [ $ro -ne 0 ]
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xx || ro=1
-[ $ro -ne 0 ]
+[ $ro -ne 1 ]
 notfound=0
 stat /proc/$pid/root/sys/fs/cgroup/freezer/$cg/cgroup.procs || notfound=1
 [ $notfound -ne 1 ]
@@ -143,7 +144,7 @@ lxc-stop -n lxc-test-automount -k
 PHASE=cgroup-full:mixed
 echo "Starting phase $PHASE"
 sed -i '/lxc.mount.auto/d' $config
-echo "lxc.mount.auto = cgorup-full:mixed  proc:mixed sys:mixed" >> $config
+echo "lxc.mount.auto = cgroup-full:mixed  proc:mixed sys:mixed" >> $config
 lxc-start -n lxc-test-automount
 pid=`lxc-info -n lxc-test-automount -p -H`
 cg=`awk -F: '/freezer/ { print $3 }' /proc/$pid/cgroup`
@@ -156,7 +157,6 @@ stat /proc/$pid/root/sys/fs/cgroup/freezer/cgroup.procs || notfound=1
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/xx || ro=1
 [ $ro -ne 0 ]
-/proc/$pid/root/sys/fs/cgroup/freezer/xx
 ro=0
 mkdir /proc/$pid/root/sys/fs/cgroup/freezer/$cg/xx || ro=1
 [ $ro -ne 1 ]
