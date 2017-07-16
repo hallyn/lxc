@@ -224,7 +224,7 @@ install_packages()
     local rootfs="$1"; shift
     local packages="$*"
 
-    chroot "${rootfs}" apt-key adv --keyserver hkp://keys.gnupg.net --recv-keys 7D8D0BF6 
+    chroot "${rootfs}" apt-key adv --keyserver hkp://keys.gnupg.net --recv-keys 7D8D0BF6
 
     chroot "${rootfs}" apt-get update
     if [ -n "${packages}" ]; then
@@ -352,7 +352,7 @@ sudo
     mkdir -p "$cache"
 
     if [ ! -f "/usr/share/debootstrap/scripts/kali-rolling" ]; then
-    
+
     # Use Kali debootstrap script
     echo "Missing kali from debootstrap"
         curl "http://git.kali.org/gitweb/?p=packages/debootstrap.git;a=blob_plain;f=scripts/kali;h=50d7ef5b4e9e905cc6da8655416cdf3ef559911e;hb=refs/heads/kali/master" > /usr/share/debootstrap/scripts/kali
@@ -570,7 +570,7 @@ EOF
 
     # Re-enable service startup
     rm "${rootfs}/usr/sbin/policy-rc.d"
-    
+
     # end
 }
 
@@ -758,7 +758,7 @@ if [ -n "$authkey" ]; then
     fi
 fi
 
-# Release file is located in dists.  
+# Release file is located in dists.
 # Only one valid release at a time. e.g.: http://repo.kali.org/kali/dists/kali-rolling/Release
 current_release=`wget ${MIRROR}/dists/kali-rolling/Release -O - 2> /dev/null | head |awk '/^Codename: (.*)$/ { print $2; }'`
 release=${release:-${current_release}}
