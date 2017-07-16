@@ -34,6 +34,9 @@ done
 export PATH=$PATH:/usr/sbin:/usr/bin:/sbin:/bin
 export GREP_OPTIONS=""
 
+# By default to not set a password.
+password=""
+
 MIRROR=${MIRROR:-http://repo.kali.org/kali}
 RELEASE="kali-rolling"
 LOCALSTATEDIR="@LOCALSTATEDIR@"
@@ -120,10 +123,9 @@ EOF
 $hostname
 EOF
 
-    # Set default root password to toor
-    password="toor"
-    echo "root:$password" | chroot $rootfs chpasswd
-    echo "Root password is '$password', please change !"
+    if [ -n "${password}" ]; then
+        echo "root:$password" | chroot $rootfs chpasswd
+    fi
 
     # reconfigure some services
 
@@ -174,8 +176,12 @@ EOF
         fi
 
         #  Allow root login with password by default
-        sed -i -e "s/PermitRootLogin without-password/PermitRootLogin yes/" $rootfs/etc/ssh/sshd_config
-        sed -i -e 's/PermitRootLogin prohibit-password/PermitRootLogin yes/' $rootfs/etc/ssh/sshd_config
+        allowed="no"
+        if [ -n "${password}" ]; then
+            allowed="yes"
+        fi
+        sed -i -e "s/PermitRootLogin without-password/PermitRootLogin ${allowed}/" $rootfs/etc/ssh/sshd_config
+        sed -i -e "s/PermitRootLogin prohibit-password/PermitRootLogin ${allowed}/" $rootfs/etc/ssh/sshd_config
 
         rm -f "$rootfs/usr/sbin/policy-rc.d"
     fi
@@ -673,6 +679,7 @@ do
         -n|--name)            name=$2; shift 2;;
            --packages)        packages=$2; shift 2;;
         -p|--path)            path=$2; shift 2;;
+        -s|--set-root-pwd)    password=$2; shift 2;;
         -r|--release)         release=$2; shift 2;;
            --rootfs)          rootfs=$2; shift 2;;
         -F|--flush-cache)     flushcache=1; shift 1;;
