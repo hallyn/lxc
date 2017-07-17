@@ -20,6 +20,45 @@
 # License along with this library; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 
+# Below copied from lxc-fedora.in - should we have a shared sourced file?
+# Some combinations of the tuning knobs below do not exactly make sense.
+# but that's ok.
+#
+# If the "root_password" is non-blank, use it, else set a default.
+# This can be passed to the script as an environment variable and is
+# set by a shell conditional assignment.  Looks weird but it is what it is.
+#
+# If the root password contains a ding ($) then try to expand it.
+# That will pick up things like ${name} and ${RANDOM}.
+# If the root password contains more than 3 consecutive X's, pass it as
+# a template to mktemp and take the result.
+#
+# If root_display_password = yes, display the temporary root password at exit.
+# If root_store_password = yes, store it in the configuration directory
+# If root_prompt_password = yes, invoke "passwd" to force the user to change
+# the root password after the container is created.
+# If root_expire_password = yes, you will be prompted to change the root
+# password at the first login.
+#
+# These are conditional assignments...  The can be overridden from the
+# preexisting environment variables...
+#
+# Make sure this is in single quotes to defer expansion to later!
+# :{root_password='Root-${name}-${RANDOM}'}
+: "${root_password='Root-${name}-XXXXXX'}"
+
+# Now, it doesn't make much sense to display, store, and force change
+# together.  But, we gotta test, right???
+: "${root_display_password='no'}"
+: "${root_store_password='yes'}"
+# Prompting for something interactive has potential for mayhem
+# with users running under the API...  Don't default to "yes"
+: "${root_prompt_password='no'}"
+
+# Expire root password? Default to yes, but can be overridden from
+# the environment variable
+: "${root_expire_password='yes'}"
+
 # Detect use under userns (unsupported)
 for arg in "$@"; do
     [ "$arg" = "--" ] && break
@@ -33,9 +72,6 @@ done
 # Make sure the usual locations are in PATH
 export PATH=$PATH:/usr/sbin:/usr/bin:/sbin:/bin
 export GREP_OPTIONS=""
-
-# By default to not set a password.
-password=""
 
 MIRROR=${MIRROR:-http://repo.kali.org/kali}
 RELEASE="kali-rolling"
@@ -123,8 +159,24 @@ EOF
 $hostname
 EOF
 
-    if [ -n "${password}" ]; then
-        echo "root:$password" | chroot $rootfs chpasswd
+    if [ "${root_display_password}" = yes ]
+    then
+        echo "Setting root password to '$root_password'"
+    fi
+    if [ "${root_store_password}" = yes ]
+    then
+        touch "${path}/tmp_root_pass"
+        chmod 600 "${path}/tmp_root_pass"
+        echo "${root_password}" > "${path}/tmp_root_pass"
+        echo "Storing root password in '${path}/tmp_root_pass'"
+    fi
+
+    echo "root:$root_password" | chroot "${rootfs}" chpasswd
+
+    if [ "${root_expire_password}" = yes ]
+    then
+        # also set this password as expired to force the user to change it!
+        chroot "${rootfs}" passwd -e root
     fi
 
     # reconfigure some services
@@ -177,7 +229,7 @@ EOF
 
         #  Allow root login with password by default
         allowed="no"
-        if [ -n "${password}" ]; then
+        if [ -n "${root_password}" ]; then
             allowed="yes"
         fi
         sed -i -e "s/PermitRootLogin without-password/PermitRootLogin ${allowed}/" $rootfs/etc/ssh/sshd_config
@@ -679,7 +731,6 @@ do
         -n|--name)            name=$2; shift 2;;
            --packages)        packages=$2; shift 2;;
         -p|--path)            path=$2; shift 2;;
-        -s|--set-root-pwd)    password=$2; shift 2;;
         -r|--release)         release=$2; shift 2;;
            --rootfs)          rootfs=$2; shift 2;;
         -F|--flush-cache)     flushcache=1; shift 1;;
@@ -733,6 +784,28 @@ else
     if [ $? -ne 0 ] ; then
         echo "no binfmt interpreter using $(basename "$interpreter")" 1>&2
         exit 1
+    fi
+fi
+
+# Let's do something better for the initial root password.
+# It's not perfect but it will defeat common scanning brute force
+# attacks in the case where ssh is exposed.  It will also be set to
+# expired, forcing the user to change it at first login.
+if [ "${root_password}" = "" ]
+then
+    root_password=Root-${name}-${RANDOM}
+else
+    # If it's got a ding in it, try and expand it!
+    if [ "$(expr "${root_password}" : '.*$.')" != 0 ]
+    then
+        root_password=$(eval echo "${root_password}")
+    fi
+
+    # If it has more than 3 consecutive X's in it, feed it
+    # through mktemp as a template.
+    if [ "$(expr "${root_password}" : '.*XXXX')" != 0 ]
+    then
+        root_password=$(mktemp -u "${root_password}")
     fi
 fi
 
@@ -817,4 +890,52 @@ post_process "${rootfs}" "${RELEASE}" ${arch} ${hostarch} "${interpreter}" "${pa
 if [ ! -z "$clean" ]; then
     clean || exit 1
     exit 0
+fi
+
+if [ "${root_display_password}" = "yes" ]
+then
+    echo "The temporary password for root is: '$root_password'
+
+You may want to note that password down before starting the container.
+"
+fi
+
+if [ "${root_store_password}" = "yes" ]
+then
+    echo "The temporary root password is stored in:
+
+        '${config}/tmp_root_pass'
+"
+fi
+
+if [ "${root_prompt_password}" = "yes" ]
+then
+    echo "Invoking the passwd command in the container to set the root password.
+
+        chroot ${rootfs} passwd
+"
+    chroot "${rootfs}" passwd
+else
+    if [ "${root_expire_password}" = "yes" ]
+    then
+        if ( mountpoint -q -- "${rootfs}" )
+        then
+            echo "To reset the root password, you can do:
+
+        lxc-start -n ${name}
+        lxc-attach -n ${name} -- passwd
+        lxc-stop -n ${name}
+"
+        else
+           echo "
+The root password is set up as expired and will require it to be changed
+at first login, which you should do as soon as possible.  If you lose the
+root password or wish to change it without starting the container, you
+can change it from the host by running the following command (which will
+also reset the expired flag):
+
+        chroot ${rootfs} passwd
+"
+        fi
+    fi
 fi
