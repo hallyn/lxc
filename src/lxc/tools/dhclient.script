@@ -1,0 +1,8 @@
+#!/bin/sh
+# This is a dhclient script for busybox-udhcpc to use to set ip addresses
+# Example usage: /busybox.lxc -i eth0 -s /dhclient.script
+
+/busybox.lxc ip addr add ${ip}/${mask} dev ${interface}
+/busybox.lxc ip link set ${interface} up
+/busybox.lxc ip route add default via ${router}
+echo "nameserver ${dns}" >> /etc/resolv.conf
