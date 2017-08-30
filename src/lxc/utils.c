@@ -1137,20 +1137,29 @@ int detect_shared_rootfs(void)
 	return 0;
 }
 
-bool switch_to_ns(pid_t pid, const char *ns) {
+int open_ns(int pid, const char *ns)
+{
 	int fd, ret;
 	char nspath[MAXPATHLEN];
 
-	/* Switch to new ns */
 	ret = snprintf(nspath, MAXPATHLEN, "/proc/%d/ns/%s", pid, ns);
 	if (ret < 0 || ret >= MAXPATHLEN)
-		return false;
+		return -1;
 
 	fd = open(nspath, O_RDONLY);
 	if (fd < 0) {
 		SYSERROR("failed to open %s", nspath);
-		return false;
+		return -1;
 	}
+	return fd;
+}
+
+bool switch_to_ns(pid_t pid, const char *ns) {
+	int fd, ret;
+
+	fd = open_ns(pid, ns);
+	if (fd < 0)
+		return false;
 
 	ret = setns(fd, 0);
 	if (ret) {

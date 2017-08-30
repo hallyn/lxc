@@ -1045,6 +1045,8 @@ void lxc_log_close(void);
  */
 bool lxc_config_item_is_supported(const char *key);
 
+int pid_from_lxcname(const char *lxcname_or_pid, const char *lxcpath);
+
 #ifdef  __cplusplus
 }
 #endif

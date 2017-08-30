@@ -42,6 +42,10 @@
 #include "start.h"
 #include "utils.h"
 
+#define OPT_SHARE_NET OPT_USAGE + 1
+#define OPT_SHARE_IPC OPT_USAGE + 2
+#define OPT_SHARE_UTS OPT_USAGE + 3
+
 lxc_log_define(lxc_execute_ui, lxc);
 
 static struct lxc_list defines;
@@ -72,6 +76,9 @@ static int my_parser(struct lxc_arguments* args, int c, char* arg)
 	case 'g':
 		if (lxc_safe_uint(arg, &args->gid) < 0)
 			return -1;
+	case OPT_SHARE_NET: args->share_ns[LXC_NS_NET] = arg; break;
+	case OPT_SHARE_IPC: args->share_ns[LXC_NS_IPC] = arg; break;
+	case OPT_SHARE_UTS: args->share_ns[LXC_NS_UTS] = arg; break;
 	}
 	return 0;
 }
@@ -81,6 +88,9 @@ static const struct option my_longopts[] = {
 	{"define", required_argument, 0, 's'},
 	{"uid", required_argument, 0, 'u'},
 	{"gid", required_argument, 0, 'g'},
+	{"share-net", required_argument, 0, OPT_SHARE_NET},
+	{"share-ipc", required_argument, 0, OPT_SHARE_IPC},
+	{"share-uts", required_argument, 0, OPT_SHARE_UTS},
 	LXC_COMMON_OPTIONS
 };
 
@@ -97,7 +107,9 @@ Options :\n\
   -f, --rcfile=FILE    Load configuration file FILE\n\
   -s, --define KEY=VAL Assign VAL to configuration variable KEY\n\
   -u, --uid=UID        Execute COMMAND with UID inside the container\n\
-  -g, --gid=GID        Execute COMMAND with GID inside the container\n",
+  -g, --gid=GID        Execute COMMAND with GID inside the container\n\
+      --share-[net|ipc|uts]=NAME Share a namespace with another container or pid\n\
+",
 	.options  = my_longopts,
 	.parser   = my_parser,
 	.checker  = my_checker,
@@ -107,7 +119,7 @@ int main(int argc, char *argv[])
 {
 	struct lxc_container *c;
 	struct lxc_log log;
-	int ret;
+	int i, ret;
 	bool bret;
 
 	lxc_list_init(&defines);
@@ -155,6 +167,24 @@ int main(int argc, char *argv[])
 
 	if (my_args.gid)
 		c->lxc_conf->init_gid = my_args.gid;
+
+	for (i = 0; i < LXC_NS_MAX; i++) {
+		if (my_args.share_ns[i] == NULL)
+			continue;
+
+		int pid = pid_from_lxcname(my_args.share_ns[i], my_args.lxcpath[0]);
+		if (pid < 1) {
+			ERROR("Bad process id for namespace sharing");
+			exit(EXIT_FAILURE);
+		}
+
+		int fd = open_ns(pid, ns_info[i].proc_name);
+		if (fd < 0) {
+			SYSERROR("Failed opening ns fd for namespace sharing");
+			exit(EXIT_FAILURE);
+		}
+		conf->inherit_ns_fd[i] = fd;
+	}
 
 	c->daemonize = false;
 	bret = c->start(c, 1, my_args.argv);

@@ -88,53 +88,6 @@ err:
 	return err;
 }
 
-static int pid_from_lxcname(const char *lxcname_or_pid, const char *lxcpath) {
-	char *eptr;
-	int pid = strtol(lxcname_or_pid, &eptr, 10);
-	if (*eptr != '\0' || pid < 1) {
-		struct lxc_container *s;
-		s = lxc_container_new(lxcname_or_pid, lxcpath);
-		if (!s) {
-			SYSERROR("'%s' is not a valid pid nor a container name", lxcname_or_pid);
-			return -1;
-		}
-
-		if (!s->may_control(s)) {
-			SYSERROR("Insufficient privileges to control container '%s'", s->name);
-			lxc_container_put(s);
-			return -1;
-		}
-
-		pid = s->init_pid(s);
-		if (pid < 1) {
-			SYSERROR("Is container '%s' running?", s->name);
-			lxc_container_put(s);
-			return -1;
-		}
-
-		lxc_container_put(s);
-	}
-	if (kill(pid, 0) < 0) {
-		SYSERROR("Can't send signal to pid %d", pid);
-		return -1;
-	}
-
-	return pid;
-}
-
-static int open_ns(int pid, const char *ns_proc_name) {
-	int fd;
-	char path[MAXPATHLEN];
-	snprintf(path, MAXPATHLEN, "/proc/%d/ns/%s", pid, ns_proc_name);
-
-	fd = open(path, O_RDONLY);
-	if (fd < 0) {
-		SYSERROR("failed to open %s", path);
-		return -1;
-	}
-	return fd;
-}
-
 static int my_parser(struct lxc_arguments* args, int c, char* arg)
 {
 	switch (c) {
