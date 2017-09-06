@@ -50,9 +50,10 @@
 #include "confile.h"
 #include "arguments.h"
 
-#define OPT_SHARE_NET OPT_USAGE + 1
-#define OPT_SHARE_IPC OPT_USAGE + 2
-#define OPT_SHARE_UTS OPT_USAGE + 3
+#define OPT_SHARE_NET OPT_USAGE  + 1
+#define OPT_SHARE_IPC OPT_USAGE  + 2
+#define OPT_SHARE_UTS OPT_USAGE  + 3
+#define OPT_SHARE_USER OPT_USAGE + 4
 
 lxc_log_define(lxc_start_ui, lxc);
 
@@ -102,6 +103,7 @@ static int my_parser(struct lxc_arguments* args, int c, char* arg)
 	case OPT_SHARE_NET: args->share_ns[LXC_NS_NET] = arg; break;
 	case OPT_SHARE_IPC: args->share_ns[LXC_NS_IPC] = arg; break;
 	case OPT_SHARE_UTS: args->share_ns[LXC_NS_UTS] = arg; break;
+	case OPT_SHARE_USER: args->share_ns[LXC_NS_USER] = arg; break;
 	}
 	return 0;
 }
@@ -118,6 +120,7 @@ static const struct option my_longopts[] = {
 	{"share-net", required_argument, 0, OPT_SHARE_NET},
 	{"share-ipc", required_argument, 0, OPT_SHARE_IPC},
 	{"share-uts", required_argument, 0, OPT_SHARE_UTS},
+	{"share-user", required_argument, 0, OPT_SHARE_USER},
 	LXC_COMMON_OPTIONS
 };
 
@@ -140,7 +143,7 @@ Options :\n\
                          If not specified, exit with failure instead\n\
                          Note: --daemon implies --close-all-fds\n\
   -s, --define KEY=VAL   Assign VAL to configuration variable KEY\n\
-      --share-[net|ipc|uts]=NAME Share a namespace with another container or pid\n\
+      --share-[net|ipc|uts|user]=NAME Share a namespace with another container or pid\n\
 ",
 	.options   = my_longopts,
 	.parser    = my_parser,

@@ -1209,16 +1209,20 @@ static int lxc_spawn(struct lxc_handler *handler)
 	int saved_ns_fd[LXC_NS_MAX];
 	int preserve_mask = 0, i, flags;
 	int netpipepair[2], nveths;
-	bool wants_to_map_ids;
+	bool wants_to_map_ids, inherit_userns = false;
 	struct lxc_list *id_map;
 
 	netpipe = -1;
 	id_map = &handler->conf->id_map;
 	wants_to_map_ids = !lxc_list_empty(id_map);
 
-	for (i = 0; i < LXC_NS_MAX; i++)
-		if (handler->conf->inherit_ns_fd[i] != -1)
+	for (i = 0; i < LXC_NS_MAX; i++) {
+		if (handler->conf->inherit_ns_fd[i] != -1) {
 			preserve_mask |= ns_info[i].clone_flag;
+			if (i == LXC_NS_USER)
+				inherit_ns_fd = true;
+		}
+	}
 
 	if (lxc_sync_init(handler))
 		return -1;
@@ -1306,6 +1310,8 @@ static int lxc_spawn(struct lxc_handler *handler)
 		 * set up correctly.
 		 */
 		flags &= ~CLONE_NEWNET;
+		if (inherit_userns)
+			handler->clone_flags &= ~CLONE_NEWUSER;
 	}
 	handler->pid = lxc_clone(do_start, handler, flags);
 	if (handler->pid < 0) {

@@ -46,7 +46,7 @@ static int do_clone(void *arg)
 	return clone_arg->fn(clone_arg->arg);
 }
 
-pid_t lxc_clone(int (*fn)(void *), void *arg, int flags)
+static pid_t do_lxc_clone(int (*fn)(void *), void *arg, int flags)
 {
 	struct clone_arg clone_arg = {
 		.fn = fn,
@@ -67,6 +67,64 @@ pid_t lxc_clone(int (*fn)(void *), void *arg, int flags)
 		ERROR("Failed to clone (%#x): %s.", flags, strerror(errno));
 
 	return ret;
+}
+/* Return < 0 on error, pid > 0 on success, 0 if we did not act */
+static pid_t handle_userns_attach(int (*fn)(void *), void *arg, int flags)
+{
+	int p[2], ret;
+	struct lxc_handler *handler = (struct lxc_handler *)arg;
+	pid_t pid;
+
+	if (handler->conf->inherit_ns_fd[LXC_NS_USER] == -1)
+		return 0;
+
+	if (pipe(p) < 0) {
+		SYSERROR("Failed creating pipe")
+		return -1;
+	}
+
+	ret = fork();
+	if (ret < 0) {
+		close(p[0]);
+		close(p[1]);
+		return ret;
+	}
+	if (ret > 0) { // parent
+		close(p[1]);
+		if (wait_for_pid(ret) != 0) {
+			close(p[0]);
+			return -1;
+		}
+		if (read(p[0], &pid, sizeof(pid_t)) != sizeof(pid_t))
+			pid = -1;
+		close(p[0]);
+		return pid;
+	}
+
+	// child
+	close(p[0]);
+	ret = lxc_setns(handler->conf->inherit_ns_fd[LXC_NS_USER], 0);
+	if (ret < 0) {
+		SYSERROR("Failed to attach to user namespace");
+		pid = -1;
+		write(p[1], &pid, sizeof(pid_t));
+		exit(1);
+	}
+	flags &= ~CLONE_NEWUSER;
+	pid = do_lxc_clone(fn, arg, flags | CLONE_PARENT);
+	write(p[1], &pid, sizeof(pid_t));
+	exit(0);
+}
+
+pid_t lxc_clone(int (*fn)(void *), void *arg, int flags)
+{
+	pid_t ret;
+
+	ret = handle_userns_attach(fn, arg, flags);
+	if (ret != 0)
+		return ret;
+
+	return do_lxc_clone(fn, arg, flags);
 }
 
 /* Leave the user namespace at the first position in the array of structs so
