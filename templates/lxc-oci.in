@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/sh -x
 
 # Create application containers from OCI images
 
@@ -147,6 +147,7 @@ skopeo copy "${OCI_URL}" "oci:${DOWNLOAD_TEMP}:latest"
 echo "Unpacking the rootfs"
 
 umoci unpack --image "${DOWNLOAD_TEMP}:latest" "${LXC_ROOTFS}.tmp"
+rmdir "${LXC_ROOTFS}"
 mv "${LXC_ROOTFS}.tmp/rootfs" "${LXC_ROOTFS}"
 rm -rf "${LXC_ROOTFS}.tmp"
 
