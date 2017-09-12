@@ -26,7 +26,7 @@ set -eu
 export PATH=$PATH:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Check for required binaries
-for bin in skopeo oci-image-tool; do
+for bin in skopeo umoci; do
     if ! type $bin >/dev/null 2>&1; then
         echo "ERROR: Missing required tool: $bin" 1>&2
         exit 1
@@ -84,6 +84,11 @@ fi
 eval set -- "$options"
 
 OCI_URL=""
+LXC_MAPPED_GID=
+LXC_MAPPED_UID=
+LXC_NAME=
+LXC_PATH=
+LXC_ROOTFS=
 
 while :; do
     case "$1" in
@@ -141,7 +146,9 @@ skopeo copy "${OCI_URL}" "oci:${DOWNLOAD_TEMP}:latest"
 # Unpack the rootfs
 echo "Unpacking the rootfs"
 
-oci-image-tool unpack --ref latest ${DOWNLOAD_TEMP} ${LXC_ROOTFS}
+umoci unpack --image "${DOWNLOAD_TEMP}:latest" "${LXC_ROOTFS}.tmp"
+mv "${LXC_ROOTFS}.tmp/rootfs" "${LXC_ROOTFS}"
+rm -rf "${LXC_ROOTFS}.tmp"
 
 LXC_CONF_FILE="${LXC_PATH}/config"
 echo "lxc.init_cmd = /bin/sh" >> "${LXC_CONF_FILE}"
