@@ -865,6 +865,10 @@ int lxc_inherit_namespace(const char *lxcname_or_pid, const char *lxcpath,
 	int fd, pid;
 	char *dup, *lastslash;
 
+	if (lxcname_or_pid[0] == '/') {
+		return open(lxcname_or_pid, O_RDONLY | O_CLOEXEC);
+	}
+
 	lastslash = strrchr(lxcname_or_pid, '/');
 	if (lastslash) {
 		dup = strdup(lxcname_or_pid);
