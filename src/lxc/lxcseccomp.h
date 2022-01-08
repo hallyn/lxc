@@ -53,9 +53,12 @@ struct seccomp_notify_proxy_msg {
 
 struct seccomp_notify {
 	bool wants_supervision;
-	int notify_fd;
-	int proxy_fd;
+	// Below, proxy_fd and handler_fd are either-or
+	int notify_fd;  // the kernel-provided seccomp unotify fd
+	int proxy_fd;   // a unix socket fd to which we do a play-by-play proxy
+	int handler_fd; // a unix socket fd over which we send the notify_fd
 	struct sockaddr_un proxy_addr;
+	struct sockaddr_un handler_addr;
 	struct seccomp_notif_sizes sizes;
 	struct seccomp_notif *req_buf;
 	struct seccomp_notif_resp *rsp_buf;

@@ -145,6 +145,7 @@ lxc_config_define(seccomp_profile);
 lxc_config_define(seccomp_allow_nesting);
 lxc_config_define(seccomp_notify_cookie);
 lxc_config_define(seccomp_notify_proxy);
+lxc_config_define(seccomp_notify_handler);
 lxc_config_define(selinux_context);
 lxc_config_define(selinux_context_keyring);
 lxc_config_define(signal_halt);
@@ -260,6 +261,7 @@ static struct lxc_config_t config_jump_table[] = {
 	{ "lxc.seccomp.allow_nesting",      true,  set_config_seccomp_allow_nesting,      get_config_seccomp_allow_nesting,      clr_config_seccomp_allow_nesting,      },
 	{ "lxc.seccomp.notify.cookie",      true,  set_config_seccomp_notify_cookie,      get_config_seccomp_notify_cookie,      clr_config_seccomp_notify_cookie,      },
 	{ "lxc.seccomp.notify.proxy",       true,  set_config_seccomp_notify_proxy,       get_config_seccomp_notify_proxy,       clr_config_seccomp_notify_proxy,       },
+	{ "lxc.seccomp.notify.handler",     true,  set_config_seccomp_notify_handler,     get_config_seccomp_notify_handler,     clr_config_seccomp_notify_handler,       },
 	{ "lxc.seccomp.profile",            true,  set_config_seccomp_profile,            get_config_seccomp_profile,            clr_config_seccomp_profile,            },
 	{ "lxc.selinux.context.keyring",    true,  set_config_selinux_context_keyring,    get_config_selinux_context_keyring,    clr_config_selinux_context_keyring     },
 	{ "lxc.selinux.context",            true,  set_config_selinux_context,            get_config_selinux_context,            clr_config_selinux_context,            },
@@ -1223,8 +1225,38 @@ static int set_config_seccomp_notify_proxy(const char *key, const char *value,
 	if (!strnequal(value, "unix:", 5))
 		return ret_errno(EINVAL);
 
+	// can't specify both proxy and handler addrs
+	if (lxc_conf->seccomp.notifier.handler_addr.sun_path[1] != '\0')
+		return ret_errno(EINVAL);
+
 	offset = value + 5;
 	if (lxc_unix_sockaddr(&lxc_conf->seccomp.notifier.proxy_addr, offset) < 0)
+		return -errno;
+
+	return 0;
+#else
+	return ret_errno(ENOSYS);
+#endif
+}
+
+static int set_config_seccomp_notify_handler(const char *key, const char *value,
+					   struct lxc_conf *lxc_conf, void *data)
+{
+#if HAVE_DECL_SECCOMP_NOTIFY_FD
+	const char *offset;
+
+	if (lxc_config_value_empty(value))
+		return clr_config_seccomp_notify_handler(key, lxc_conf, NULL);
+
+	if (!strnequal(value, "unix:", 5))
+		return ret_errno(EINVAL);
+
+	// can't specify both proxy and handler addrs
+	if (lxc_conf->seccomp.notifier.proxy_addr.sun_path[1] != '\0')
+		return ret_errno(EINVAL);
+
+	offset = value + 5;
+	if (lxc_unix_sockaddr(&lxc_conf->seccomp.notifier.handler_addr, offset) < 0)
 		return -errno;
 
 	return 0;
@@ -4419,6 +4451,19 @@ static int get_config_seccomp_notify_proxy(const char *key, char *retv, int inle
 #endif
 }
 
+static int get_config_seccomp_notify_handler(const char *key, char *retv, int inlen,
+					   struct lxc_conf *c, void *data)
+{
+#if HAVE_DECL_SECCOMP_NOTIFY_FD
+	return lxc_get_conf_str(retv, inlen,
+				(c->seccomp.notifier.handler_addr.sun_path[0]) == '/'
+				    ? &c->seccomp.notifier.handler_addr.sun_path[0]
+				    : &c->seccomp.notifier.handler_addr.sun_path[1]);
+#else
+	return ret_errno(ENOSYS);
+#endif
+}
+
 static int get_config_seccomp_profile(const char *key, char *retv, int inlen,
 				      struct lxc_conf *c, void *data)
 {
@@ -5156,6 +5201,18 @@ static inline int clr_config_seccomp_notify_proxy(const char *key,
 #if HAVE_DECL_SECCOMP_NOTIFY_FD
 	memset(&c->seccomp.notifier.proxy_addr, 0,
 	       sizeof(c->seccomp.notifier.proxy_addr));
+	return 0;
+#else
+	return ret_errno(ENOSYS);
+#endif
+}
+
+static inline int clr_config_seccomp_notify_handler(const char *key,
+						   struct lxc_conf *c, void *data)
+{
+#if HAVE_DECL_SECCOMP_NOTIFY_FD
+	memset(&c->seccomp.notifier.handler_addr, 0,
+	       sizeof(c->seccomp.notifier.handler_addr));
 	return 0;
 #else
 	return ret_errno(ENOSYS);
