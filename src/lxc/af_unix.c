@@ -165,16 +165,6 @@ int lxc_unix_send_fds(int fd, int *sendfds, int num_sendfds, void *data,
 	return lxc_abstract_unix_send_fds(fd, sendfds, num_sendfds, data, size);
 }
 
-int lxc_unix_send_fd_to_addr(struct sockaddr_un *addr, int fd)
-{
-	int destfd;
-
-	destfd = lxc_unix_connect(addr);
-	if (destfd < 0)
-		return destfd;
-	return lxc_unix_send_fds(destfd, &fd, 1, NULL, 0);
-}
-
 int __lxc_abstract_unix_send_two_fds(int fd, int fd_first, int fd_second,
 				     void *data, size_t size)
 {

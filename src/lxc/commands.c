@@ -1586,9 +1586,9 @@ static int lxc_cmd_seccomp_notify_add_listener_callback(int fd,
 	}
 
 	ret = lxc_mainloop_add_handler(descr, recv_fd,
-				       seccomp_notify_handler,
-				       seccomp_notify_cleanup_handler,
-				       handler, "seccomp_notify_handler");
+				       seccomp_notify_proxy_handler,
+				       seccomp_notify_cleanup_proxy_handler,
+				       handler, "seccomp_notify_proxy_handler");
 	if (ret < 0) {
 		rsp.ret = -errno;
 		goto out;

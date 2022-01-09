@@ -148,8 +148,6 @@ static inline ssize_t lxc_abstract_unix_recv_two_fds(int fd, int *fd_first, int 
 
 __hidden extern int lxc_unix_send_fds(int fd, int *sendfds, int num_sendfds, void *data, size_t size);
 
-__hidden extern int lxc_unix_send_fd_to_addr(struct sockaddr_un *addr, int fd);
-
 __hidden extern int lxc_abstract_unix_send_credential(int fd, void *data, size_t size)
     __access_r(2, 3);
 

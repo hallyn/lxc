@@ -53,10 +53,9 @@ struct seccomp_notify_proxy_msg {
 
 struct seccomp_notify {
 	bool wants_supervision;
-	// Below, proxy_fd and handler_fd are either-or
 	int notify_fd;  // the kernel-provided seccomp unotify fd
 	int proxy_fd;   // a unix socket fd to which we do a play-by-play proxy
-	int handler_fd; // a unix socket fd over which we send the notify_fd
+	// proxy_addr and handler_addr are either-or
 	struct sockaddr_un proxy_addr;
 	struct sockaddr_un handler_addr;
 	struct seccomp_notif_sizes sizes;
@@ -82,10 +81,13 @@ struct lxc_seccomp {
 __hidden extern int lxc_seccomp_load(struct lxc_conf *conf);
 __hidden extern int lxc_read_seccomp_config(struct lxc_conf *conf);
 __hidden extern void lxc_seccomp_free(struct lxc_seccomp *seccomp);
-__hidden extern int seccomp_notify_cleanup_handler(int fd, void *data);
-__hidden extern int seccomp_notify_handler(int fd, uint32_t events, void *data,
+__hidden extern int seccomp_notify_cleanup_proxy_handler(int fd, void *data);
+__hidden extern int seccomp_notify_proxy_handler(int fd, uint32_t events, void *data,
 					   struct lxc_async_descr *descr);
 __hidden extern void seccomp_conf_init(struct lxc_conf *conf);
+__hidden extern int lxc_seccomp_setup_handler(struct lxc_seccomp *seccomp,
+					    struct lxc_async_descr *descr,
+					    struct lxc_handler *handler);
 __hidden extern int lxc_seccomp_setup_proxy(struct lxc_seccomp *seccomp,
 					    struct lxc_async_descr *descr,
 					    struct lxc_handler *handler);
@@ -132,13 +134,13 @@ static inline void lxc_seccomp_free(struct lxc_seccomp *seccomp)
 	free_disarm(seccomp->seccomp);
 }
 
-static inline int seccomp_notify_handler(int fd, uint32_t events, void *data,
+static inline int seccomp_notify_proxy_handler(int fd, uint32_t events, void *data,
 				  struct lxc_async_descr *descr)
 {
 	return ret_errno(ENOSYS);
 }
 
-static inline int seccomp_notify_cleanup_handler(void *data)
+static inline int seccomp_notify_cleanup_proxy_handler(void *data)
 {
 	return ret_errno(ENOSYS);
 }

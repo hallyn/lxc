@@ -1288,14 +1288,6 @@ int lxc_seccomp_load(struct lxc_conf *conf)
 		conf->seccomp.notifier.notify_fd = ret;
 		TRACE("Retrieved new seccomp listener fd %d", ret);
 	}
-	if (conf->seccomp.notifier.handler_addr.sun_path[1] != '\0') {
-		// pass the notify fd to another program to handle it for us
-		if (lxc_unix_send_fd_to_addr(&conf->seccomp.notifier.handler_addr,
-					     conf->seccomp.notifier.notify_fd)) {
-			return log_error_errno(-1, errno, "Failed to pass seccomp listener fd to handler");;
-		}
-		close_prot_errno_disarm(conf->seccomp.notifier.notify_fd);
-	}
 #endif
 
 	return 0;
@@ -1315,7 +1307,6 @@ void lxc_seccomp_free(struct lxc_seccomp *seccomp)
 #if HAVE_DECL_SECCOMP_NOTIFY_FD
 	close_prot_errno_disarm(seccomp->notifier.notify_fd);
 	close_prot_errno_disarm(seccomp->notifier.proxy_fd);
-	close_prot_errno_disarm(seccomp->notifier.handler_fd);
 	seccomp_notify_free(seccomp->notifier.req_buf, seccomp->notifier.rsp_buf);
 	seccomp->notifier.req_buf = NULL;
 	seccomp->notifier.rsp_buf = NULL;
@@ -1367,7 +1358,7 @@ static void seccomp_notify_default_answer(int fd, struct seccomp_notif *req,
 }
 #endif
 
-int seccomp_notify_cleanup_handler(int fd, void *data)
+int seccomp_notify_cleanup_proxy_handler(int fd, void *data)
 {
 #if HAVE_DECL_SECCOMP_NOTIFY_FD
 	struct lxc_handler *hdlr = data;
@@ -1387,7 +1378,7 @@ int seccomp_notify_cleanup_handler(int fd, void *data)
 	return 0;
 }
 
-int seccomp_notify_handler(int fd, uint32_t events, void *data,
+int seccomp_notify_proxy_handler(int fd, uint32_t events, void *data,
 			   struct lxc_async_descr *descr)
 {
 
@@ -1583,7 +1574,6 @@ void seccomp_conf_init(struct lxc_conf *conf)
 	conf->seccomp.notifier.wants_supervision = false;
 	conf->seccomp.notifier.notify_fd = -EBADF;
 	conf->seccomp.notifier.proxy_fd = -EBADF;
-	conf->seccomp.notifier.handler_fd = -EBADF;
 	memset(&conf->seccomp.notifier.proxy_addr, 0,
 	       sizeof(conf->seccomp.notifier.proxy_addr));
 	memset(&conf->seccomp.notifier.handler_addr, 0,
@@ -1592,6 +1582,33 @@ void seccomp_conf_init(struct lxc_conf *conf)
 	conf->seccomp.notifier.rsp_buf = NULL;
 	conf->seccomp.notifier.cookie = NULL;
 #endif
+}
+
+int lxc_seccomp_setup_handler(struct lxc_seccomp *seccomp,
+			      struct lxc_async_descr *descr,
+			      struct lxc_handler *handler)
+{
+#if HAVE_DECL_SECCOMP_NOTIFY_FD
+	if (seccomp->notifier.wants_supervision &&
+	    seccomp->notifier.handler_addr.sun_path[1] != '\0') {
+		// pass the notify fd to another program to handle it for us
+		__do_close int handler_fd = -EBADF;
+		int ret;
+
+		handler_fd = lxc_unix_connect_type(&seccomp->notifier.handler_addr,
+					     SOCK_SEQPACKET);
+		if (handler_fd < 0) {
+			return log_error(-1, "Failed to connect to seccomp unotify handler");
+		}
+
+		if (lxc_unix_send_fds(handler_fd, &seccomp->notifier.notify_fd, 1, NULL, 0)) {
+			return log_error_errno(-1, errno, "Failed to pass seccomp listener fd to handler");;
+		}
+
+		close_prot_errno_disarm(seccomp->notifier.notify_fd);
+	}
+#endif
+	return 0;
 }
 
 int lxc_seccomp_setup_proxy(struct lxc_seccomp *seccomp,
@@ -1634,10 +1651,10 @@ int lxc_seccomp_setup_proxy(struct lxc_seccomp *seccomp,
 		}
 
 		ret = lxc_mainloop_add_handler(descr, seccomp->notifier.notify_fd,
-					       seccomp_notify_handler,
-					       seccomp_notify_cleanup_handler,
+					       seccomp_notify_proxy_handler,
+					       seccomp_notify_cleanup_proxy_handler,
 					       handler,
-					       "seccomp_notify_handler");
+					       "seccomp_notify_proxy_handler");
 		if (ret < 0) {
 			ERROR("Failed to add seccomp notify handler for %d to mainloop",
 			      notify_fd);
