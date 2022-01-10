@@ -1593,7 +1593,6 @@ int lxc_seccomp_setup_handler(struct lxc_seccomp *seccomp,
 	    seccomp->notifier.handler_addr.sun_path[1] != '\0') {
 		// pass the notify fd to another program to handle it for us
 		__do_close int handler_fd = -EBADF;
-		int ret;
 
 		handler_fd = lxc_unix_connect_type(&seccomp->notifier.handler_addr,
 					     SOCK_SEQPACKET);
