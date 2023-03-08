@@ -325,6 +325,10 @@ else
     has_sd_bus = false
     srcconf.set10('HAVE_LIBSYSTEMD', false)
 endif
+libdbus = dependency('dbus-1', required: true)
+pkgconfig_libs += libdbus
+liblxc_dependencies += libdbus
+srcconf.set10('HAVE_DBUS', libdbus.found())
 
 ## Time EPOCH.
 sh = find_program('sh')

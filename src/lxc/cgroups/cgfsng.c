@@ -64,6 +64,10 @@
 #include <systemd/sd-event.h>
 #endif
 
+#if HAVE_DBUS
+#include <dbus/dbus.h>
+#endif
+
 lxc_log_define(cgfsng, cgroup);
 
 /*
@@ -963,7 +967,6 @@ static bool check_cgroup_dir_config(struct lxc_conf *conf)
 #define SYSTEMD_SCOPE_UNSUPP 1
 #define SYSTEMD_SCOPE_SUCCESS 0
 
-#if HAVE_LIBSYSTEMD
 struct sd_callback_data {
 	char *scope_name;
 	bool job_complete;
@@ -989,12 +992,76 @@ static int systemd_jobremoved_callback(sd_bus_message *m, void *userdata, sd_bus
 	return log_debug(0, "result was '%s', not 'done'", result);
 }
 
+static bool dbus_threads_initialized = false;
+
+#define MEMBER_JOIN "AttachProcessesToUnit"
+
 #define DESTINATION "org.freedesktop.systemd1"
 #define PATH "/org/freedesktop/systemd1"
 #define INTERFACE "org.freedesktop.systemd1.Manager"
-#define MEMBER "StartTransientUnit"
+#define MEMBER_START "StartTransientUnit"
 static bool start_scope(sd_bus *bus, struct sd_callback_data *data, struct sd_event *event)
 {
+#if 0
+	__do_free char *user_bus = NULL;
+	const char *fail_name = "fail";
+	DBusError dbus_error;
+	DBusConnection *connection = NULL;
+	DBusMessageIter iter;
+	DBusPendingCall* pending;
+	DBusMessage* message = NULL;
+
+	dbus_error_init(&dbus_error);
+	user_bus = strdup("unix:path=/run/user/1000/bus"); // TODO get from $DBUS_SESSION_BUS_ADDRESS
+	connection = dbus_connection_open(user_bus, &dbus_error);
+	if (!connection) {
+		DEBUG("Failed opening dbus connection: %s: %s",
+				dbus_error.name, dbus_error.message);
+		dbus_error_free(&dbus_error);
+		return false;
+	}
+	dbus_error_free(&dbus_error);
+
+	message = dbus_message_new_method_call(DESTINATION, PATH, INTERFACE, MEMBER_START);
+	if (!message) {
+		goto out_free_connection;
+	}
+
+	dbus_message_iter_init_append (message, &iter);
+	if (!dbus_message_iter_append_basic(iter, DBUS_TYPE_STRING, &scope_name)) {
+		goto out_free_message;
+	}
+	if (!(dbus_message_append_args(message, DBUS_TYPE_STRING, &fail_name, 0))) {
+		goto out_free_message;
+	}
+	if (!dbus_message_append_array(iter, &pid, 1)) {
+		goto out_free_message;
+	}
+	if (!dbus_connection_send_with_reply(connection, message, &pending -1)) {
+		goto out_free_message;
+	}
+
+	if (!pending) {
+		goto out_free_message;
+	}
+	dbus_connection_flush(connection);
+	dbus_message_unref(message);
+	message = NULL;
+
+	dbus_pending_call_block(pending);
+	// Q: do we have to read the reply?
+	dbus_pending_call_unref(pending);
+
+	ret = true;
+
+out_free_message:
+	if (message)
+		dbus_message_unref(message);
+out_free_connection:
+	dbus_connection_unref(connection);
+
+	return false;
+#else
 	__attribute__((__cleanup__(sd_bus_error_free))) sd_bus_error error = SD_BUS_ERROR_NULL;;
 	__attribute__((__cleanup__(sd_bus_message_unrefp))) sd_bus_message *reply = NULL;
 	__attribute__((__cleanup__(sd_bus_message_unrefp))) sd_bus_message *m = NULL;
@@ -1002,7 +1069,7 @@ static bool start_scope(sd_bus *bus, struct sd_callback_data *data, struct sd_ev
 	int r;
 
 	r = sd_bus_message_new_method_call(bus, &m,
-		DESTINATION, PATH, INTERFACE, MEMBER);
+		DESTINATION, PATH, INTERFACE, MEMBER_START);
 	if (r < 0)
 		return log_error(false, "Failed creating sdbus message");
 
@@ -1012,7 +1079,7 @@ static bool start_scope(sd_bus *bus, struct sd_callback_data *data, struct sd_ev
 
 	r = sd_bus_message_open_container(m, 'a', "(sv)");
 	if (r < 0)
-		return log_error(false, "Failed allocating sdbus msg properties");
+		return log_error(false, "Failed allocating sdbus message properties");
 
 	r = sd_bus_message_append(m, "(sv)(sv)(sv)",
 		"PIDs", "au", 1, getpid(),
@@ -1060,6 +1127,7 @@ static bool start_scope(sd_bus *bus, struct sd_callback_data *data, struct sd_ev
 		return log_error(false, "Error: %s job was never removed", data->scope_name);
 	}
 	return true;
+#endif
 }
 
 static bool string_pure_unified_system(char *contents)
@@ -1116,34 +1184,87 @@ static bool pure_unified_system(void)
 	return string_pure_unified_system(buf);
 }
 
-#define MEMBER_JOIN "AttachProcessesToUnit"
+static bool dbus_append_array(DBusMessageIter *iter, const uint32_t *value, unsigned int len)
+{
+	DBusMessageIter iter_array;
+	unsigned int i;
+
+	if (!dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, DBUS_TYPE_UINT32_AS_STRING, &iter_array))
+		return FALSE;
+
+	for (i = 0; i < len; i++) {
+		if (!dbus_message_iter_append_basic(&iter_array, DBUS_TYPE_UINT32, &(value[i])))
+			return FALSE;
+	}
+
+	if (!dbus_message_iter_close_container(iter, &iter_array))
+		return FALSE;
+
+	return TRUE;
+}
+
 static bool enter_scope(char *scope_name, pid_t pid)
 {
-	__attribute__((__cleanup__(sd_bus_unrefp))) sd_bus *bus = NULL;
-	__attribute__((__cleanup__(sd_bus_error_free))) sd_bus_error error = SD_BUS_ERROR_NULL;;
-	__attribute__((__cleanup__(sd_bus_message_unrefp))) sd_bus_message *reply = NULL;
-	__attribute__((__cleanup__(sd_bus_message_unrefp))) sd_bus_message *m = NULL;
-	int r;
+	__do_free char *user_bus = NULL;
+	const char *init_name = "/init";
+	DBusError dbus_error;
+	DBusConnection *connection = NULL;
+	DBusMessageIter iter;
+	DBusPendingCall* pending;
+	DBusMessage* message = NULL;
+	bool ret = false;
+	uint32_t pid_uint = pid;
 
-	r = sd_bus_open_user(&bus);
-	if (r < 0)
-		return log_error(false, "Failed to connect to user bus: %s", strerror(-r));
+	dbus_error_init(&dbus_error);
+	user_bus = strdup("unix:path=/run/user/1000/bus"); // TODO get from $DBUS_SESSION_BUS_ADDRESS
+	connection = dbus_connection_open(user_bus, &dbus_error);
+	if (!connection) {
+		DEBUG("Failed opening dbus connection: %s: %s",
+				dbus_error.name, dbus_error.message);
+		dbus_error_free(&dbus_error);
+		return false;
+	}
+	dbus_error_free(&dbus_error);
 
-	r = sd_bus_message_new_method_call(bus, &m,
-		DESTINATION, PATH, INTERFACE, MEMBER_JOIN);
-	if (r < 0)
-		return log_error(false, "Failed creating sdbus message");
+	message = dbus_message_new_method_call(DESTINATION, PATH, INTERFACE, MEMBER_JOIN);
+	if (!message) {
+		goto out_free_connection;
+	}
 
-	r = sd_bus_message_append(m, "ssau", scope_name, "/init", 1, pid);
-	if (r < 0)
-		return log_error(false, "Failed setting systemd scope name");
+	dbus_message_iter_init_append (message, &iter);
+	if (!dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &scope_name)) {
+		goto out_free_message;
+	}
+	if (!(dbus_message_append_args(message, DBUS_TYPE_STRING, &init_name, 0))) {
+		goto out_free_message;
+	}
+	if (!dbus_append_array(&iter, &pid_uint, 1)) {
+		goto out_free_message;
+	}
+	if (! dbus_connection_send_with_reply(connection, message, &pending, -1)) {
+		goto out_free_message;
+	}
 
+	if (!pending) {
+		goto out_free_message;
+	}
+	dbus_connection_flush(connection);
+	dbus_message_unref(message);
+	message = NULL;
 
-	r = sd_bus_call(NULL, m, 0, &error, &reply);
-	if (r < 0)
-		return log_error(false,  "Failed sending sdbus message: %s", error.message);
+	dbus_pending_call_block(pending);
+	// Q: do we have to read the reply?
+	dbus_pending_call_unref(pending);
 
-	return true;
+	ret = true;
+
+out_free_message:
+	if (message)
+		dbus_message_unref(message);
+out_free_connection:
+	dbus_connection_unref(connection);
+
+	return ret;
 }
 
 static bool enable_controllers_delegation(int fd_dir, char *cg)
@@ -1233,6 +1354,12 @@ static int unpriv_systemd_create_scope(struct cgroup_ops *ops, struct lxc_conf *
 	if (!pure_unified_system())
 		return log_info(SYSTEMD_SCOPE_UNSUPP, "Not in unified layout, not using a systemd unit");
 
+	if (!dbus_threads_initialized) {
+		/* tell dbus to do struct locking for thread safety */
+		dbus_threads_init_default();
+		dbus_threads_initialized = true;
+	}
+
 	r = sd_bus_open_user(&bus);
 	if (r < 0)
 		return log_error(SYSTEMD_SCOPE_FAILED, "Failed to connect to user bus: %s", strerror(-r));
@@ -1286,13 +1413,6 @@ static int unpriv_systemd_create_scope(struct cgroup_ops *ops, struct lxc_conf *
 
 	return SYSTEMD_SCOPE_FAILED; // failed, let's try old-school after all
 }
-#else /* !HAVE_LIBSYSTEMD */
-static int unpriv_systemd_create_scope(struct cgroup_ops *ops, struct lxc_conf *conf)
-{
-	TRACE("unpriv_systemd_create_scope: no systemd support");
-	return SYSTEMD_SCOPE_UNSUPP; // not supported
-}
-#endif /* HAVE_LIBSYSTEMD */
 
 // Return a duplicate of cgroup path @cg without leading /, so
 // that caller can own+free it and be certain it's not abspath.
