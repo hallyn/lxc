@@ -123,3 +123,7 @@ option('memfd-rexec', type : 'boolean', value : 'true',
 
 option('distrosysconfdir', type : 'string', value: '',
        description: 'relative path to sysconfdir for distro default configuration')
+
+option('dbus', type: 'boolean', value: 'true',
+       description: 'use dbus')
+
